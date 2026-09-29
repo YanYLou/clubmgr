@@ -3,7 +3,7 @@ from datetime import date
 
 @dataclass
 class Operator:
-    op_id:   int
+    id:      int
     op_name: str
 
 @dataclass
