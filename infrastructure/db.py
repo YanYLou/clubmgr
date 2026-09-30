@@ -1,39 +1,6 @@
-from abc import ABC, abstractmethod
-from models import Record, Operator
+from infrastructure.repositories import *
 
 import sqlite3
-
-
-class OperatorRepository(ABC):
-    @abstractmethod
-    def create(self, oprator: Operator) -> Operator: ...
-
-    @abstractmethod
-    def get(self, op_id: int) -> Operator | None: ...
-
-    @abstractmethod
-    def delete(self, op_id: int) -> None: ...
-
-    @abstractmethod
-    def list(self, **filters) -> list[Operator]: ...
-
-
-class RecordRepository(ABC):
-    @abstractmethod
-    def create(self, record: Record) -> Record: ...
-
-    @abstractmethod
-    def read(self, record_id: int) -> Record | None: ...
-
-    @abstractmethod
-    def update(self, record: Record) -> None: ...
-
-    @abstractmethod
-    def delete(self, record_id: int) -> None: ...
-
-    @abstractmethod
-    def list(self, **filters) -> list[Record]: ...
-
 
 class SQLiteOpRepo(OperatorRepository):
     def __init__(self, db_path: str):
