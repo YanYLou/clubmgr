@@ -14,6 +14,7 @@ class SQLiteOpRepo(OperatorRepository):
             CREATE TABLE IF NOT EXISTS ops (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 op_name TEXT NOT NULL,
+                quota INT NOT NULL DEFAULT 200
             )
         """)
         self.conn.commit()
