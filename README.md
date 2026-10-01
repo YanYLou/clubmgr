@@ -1,4 +1,4 @@
-# Suggestions for DeepSeek
+# Suggestions from DeepSeek
 *Reference purpose only*
 
 你们社团的流程其实已经比较清晰了，核心是 **“人、额度、耗材、经费、打印记录、预约安排”** 六件事。数据库不用一次做得很复杂，但要把关键字段和权限留好，后面扩展才不痛苦。
