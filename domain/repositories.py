@@ -22,7 +22,7 @@ class MemberRepository(Repository[Member]):
     def find_by_student_id(self, student_id: str) -> Member | None: ...
     @abstractmethod
     def list_by_role(self, role: Role) -> list[Member]: ...
-    # Operator ¾ÍÊÇ role in (OP1, OP2, PRESIDENT, ...) µÄ Member£¬²»ÔÙµ¥¶À½¨²Ö¿â
+    # Operator å°±æ˜¯ role in (OP1, OP2, PRESIDENT, ...) çš„ Memberï¼Œä¸å†å•ç‹¬å»ºä»“åº“
 
 class RecordRepository(Repository[Record]):
     @abstractmethod

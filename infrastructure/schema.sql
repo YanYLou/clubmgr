@@ -13,7 +13,7 @@ CREATE TABLE members (
 CREATE TABLE quota_transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     member_id INTEGER NOT NULL,
-    amount REAL NOT NULL,          -- ÕýÊýÔö¼Ó£¬¸ºÊýÏûºÄ
+    amount REAL NOT NULL,          -- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     type TEXT NOT NULL,            -- init/print/contribution_reward/manual_adjust
     related_record_id INTEGER,
     operator_id INTEGER NOT NULL,
@@ -51,7 +51,7 @@ CREATE TABLE filaments (
 CREATE TABLE inventory_transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     filament_id INTEGER NOT NULL,
-    amount REAL NOT NULL,          -- ÕýÊýÈë¿â£¬¸ºÊý³ö¿â
+    amount REAL NOT NULL,          -- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½â£¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     type TEXT NOT NULL,            -- purchase/print/adjust
     related_record_id INTEGER,
     operator_id INTEGER NOT NULL,
@@ -63,7 +63,7 @@ CREATE TABLE inventory_transactions (
 
 CREATE TABLE fund_transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    amount REAL NOT NULL,          -- ÕýÊýÊÕÈë£¬¸ºÊýÖ§³ö
+    amount REAL NOT NULL,          -- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ë£¬ï¿½ï¿½ï¿½ï¿½Ö§ï¿½ï¿½
     type TEXT NOT NULL,            -- income/expense
     date TEXT NOT NULL,
     operator_id INTEGER NOT NULL,

@@ -25,12 +25,12 @@ class Member:
 @dataclass
 class Record:
     id: Optional[int] = None
-    member_id: int = 0          # ´òÓ¡µÄÉçÔ±
+    member_id: int = 0          # æ‰“å°çš„ç¤¾å‘˜
     printer_name: str = ""
     filament_name: str = ""
     consumption: float = 0.0
     date: date = field(default_factory=date.today)
-    operator_id: int = 0        # ¼ÇÂ¼ÈË£¬ÔËÓª2
+    operator_id: int = 0        # è®°å½•äººï¼Œè¿è¥2
     is_charged: bool = False
     fee: float = 0.0
     reservation_id: Optional[int] = None
