@@ -13,8 +13,8 @@ CREATE TABLE members (
 CREATE TABLE quota_transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     member_id INTEGER NOT NULL,
-    amount REAL NOT NULL,          -- �������ӣ���������
-    type TEXT NOT NULL,            -- init/print/contribution_reward/manual_adjust
+    amount REAL NOT NULL,         
+    type TEXT NOT NULL,        
     related_record_id INTEGER,
     operator_id INTEGER NOT NULL,
     date TEXT NOT NULL,
@@ -51,8 +51,8 @@ CREATE TABLE filaments (
 CREATE TABLE inventory_transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     filament_id INTEGER NOT NULL,
-    amount REAL NOT NULL,          -- ������⣬��������
-    type TEXT NOT NULL,            -- purchase/print/adjust
+    amount REAL NOT NULL,        
+    type TEXT NOT NULL,         
     related_record_id INTEGER,
     operator_id INTEGER NOT NULL,
     date TEXT NOT NULL,
@@ -63,8 +63,8 @@ CREATE TABLE inventory_transactions (
 
 CREATE TABLE fund_transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    amount REAL NOT NULL,          -- �������룬����֧��
-    type TEXT NOT NULL,            -- income/expense
+    amount REAL NOT NULL,      
+    type TEXT NOT NULL,        
     date TEXT NOT NULL,
     operator_id INTEGER NOT NULL,
     note TEXT,
@@ -75,7 +75,7 @@ CREATE TABLE reservations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     member_id INTEGER NOT NULL,
     week_start TEXT NOT NULL,
-    activity_day TEXT NOT NULL,    -- mon/wed/fri
+    activity_day TEXT NOT NULL,  
     order_no INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     operator_id INTEGER NOT NULL,
@@ -88,7 +88,7 @@ CREATE TABLE contributions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     member_id INTEGER NOT NULL,
     amount REAL NOT NULL,
-    type TEXT NOT NULL,            -- money/material
+    type TEXT NOT NULL,           
     material_desc TEXT,
     reward_quota REAL NOT NULL DEFAULT 0,
     date TEXT NOT NULL,
