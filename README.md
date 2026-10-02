@@ -1,4 +1,11 @@
-# New Suggestions from DeepSeek
+# Clubmgr: A convenient tool to manage Zaomeng 3D Printing Club
+
+![Static Badge](https://img.shields.io/badge/Status-In_development-blue)
+
+
+> We take no responsibilities for any crashes.
+
+## New Suggestions from DeepSeek
 
 > *Reference purpose only*
 
