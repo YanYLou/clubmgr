@@ -1,5 +1,6 @@
 # New Suggestions from DeepSeek
-*Reference purpose only*
+
+> *Reference purpose only*
 
 你这版新结构比之前好，**分层方向是对的**：`domain` 放模型和业务，`infrastructure` 放数据库，`interfaces` 放接口，`main.py` 组装。  
 但目前还只是骨架，而且有几个关键问题：`Operator` 概念混乱、`Record.op_id` 指代不清、仓储抽象方法没实现、`db.py` 里 `row_factory` 写错、每个 Repo 各自连接不利于事务。下面我按你的新结构重新给一版规划。
@@ -334,7 +335,7 @@ Repo 不要自己 `connect`，而是接收 `Database`。
 角色：
 
 | 角色 | 说明 |
-|---|---|
+| --- | --- |
 | president | 社长，全部权限 |
 | vice_president | 副社长，全部权限 |
 | op1 | 运营1，预约安排 |
@@ -345,7 +346,7 @@ Repo 不要自己 `connect`，而是接收 `Database`。
 权限矩阵：
 
 | 功能 | 社长/副社长 | 运营1 | 运营2 | 人事 | 普通社员 |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | 查看所有数据 | ✅ | ❌ | ❌ | ❌ | ❌ |
 | 成员增改/退社 | ✅ | ❌ | ❌ | ✅ | ❌ |
 | 预约安排 | ✅ | ✅ | ❌ | ❌ | ❌ |
@@ -464,7 +465,7 @@ def add_contribution(self, operator_id, member_id, amount, reward_quota, date, n
    - filaments
    - inventory_transactions
    - fund_transactions
-   
+
    第二版再加 reservations、contributions、报表。
 
 ---
