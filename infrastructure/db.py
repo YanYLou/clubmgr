@@ -2,6 +2,10 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+from datetime import date, datetime
+
+sqlite3.register_adapter(date, lambda d: d.isoformat())
+sqlite3.register_adapter(datetime, lambda dt: dt.isoformat())
 
 class Database:
     def __init__(self, path: str):
