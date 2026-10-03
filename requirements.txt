@@ -1,0 +1,8 @@
+# 运行依赖（Web 接口层）
+flask==2.3.3
+
+# 读取 interfaces/.flaskenv 需要它；当前开发机上尚未安装
+python-dotenv>=1.0
+
+# 测试依赖
+pytest>=8
