@@ -44,6 +44,22 @@ class Database:
         self._init_schema()
 
     def _init_schema(self):
+        """建表：只在空库上执行 ``schema.sql``。
+
+        阶段 0 修复（既有缺陷）：原来每次连接都无条件执行建表脚本，第二次连接
+        一个已存在的数据库文件时会抛 ``table members already exists``
+        （``CREATE TABLE`` 不带 ``IF NOT EXISTS``）。这里改成"库里已有表就跳过"。
+
+        注意：这只负责初始化。后续若要**修改**已有表结构，需要迁移脚本或重建
+        数据库文件，不能指望重跑 schema.sql。
+        """
+        existing = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name NOT LIKE 'sqlite_%' LIMIT 1"
+        ).fetchone()
+        if existing is not None:
+            return
+
         schema_path = Path(__file__).with_name("schema.sql")
         schema_sql = schema_path.read_text(encoding="utf-8")
         # 阶段 0.2 修改：autocommit 模式下 executescript 自身即落盘，无需再 commit。

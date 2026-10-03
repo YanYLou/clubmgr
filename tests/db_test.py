@@ -135,3 +135,23 @@ def test_context_manager_closes_connection():
 
     with pytest.raises(sqlite3.ProgrammingError):
         db.conn.execute("SELECT 1")
+
+
+def test_reopen_existing_database_keeps_data(tmp_path):
+    """阶段 0 修复（既有缺陷）：重复连接已存在的库不再抛 table already exists。"""
+
+    from infrastructure.db import Database
+
+    db_path = tmp_path / "club.db"
+
+    db = Database(db_path)
+    with db.transaction():
+        db.conn.execute("INSERT INTO members (name) VALUES (?)", ("Alice",))
+    db.close()
+
+    again = Database(db_path)          # 原来这里会抛 OperationalError
+    try:
+        count = again.conn.execute("SELECT COUNT(*) FROM members").fetchone()[0]
+        assert count == 1
+    finally:
+        again.close()
