@@ -19,3 +19,20 @@ dist/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 本地工作笔记 / AI 辅助分析（不属于项目源码，勿提交）
+.agent-notes/
+AGENTS.md
+
+# 本地数据库：含社员个人信息，且每次运行都会变动，勿提交（阶段 0.6 新增）
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 编辑器 / 工具缓存（阶段 0.6 新增）
+.idea/
+.mypy_cache/
+.ruff_cache/
+*.log

@@ -1,0 +1,13 @@
+# 统一换行符：仓库内存 LF，避免不同机器上出现整文件 diff（阶段 0.6 新增）
+* text=auto eol=lf
+
+# 明确文本类型，避免被当成二进制
+*.py     text eol=lf
+*.sql    text eol=lf
+*.md     text eol=lf
+*.ini    text eol=lf
+*.txt    text eol=lf
+*.ps1    text eol=lf
+
+# SQLite 数据库按二进制处理（正常情况下已被 .gitignore 忽略）
+*.db     binary
