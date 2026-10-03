@@ -85,4 +85,53 @@ def test_repo_create():
     assert member.role == Role.MEMBER
     assert member.join_date == "2026-09-01"
     assert member.note == "No notes"
-    
+
+
+# ---------------------------------------------------------------------------
+# 阶段 0.1 / 0.3 新增：Database 的目录创建与生命周期
+# ---------------------------------------------------------------------------
+
+def test_database_creates_missing_parent_directory(tmp_path):
+    """阶段 0.1 新增：数据库文件所在目录不存在时自动创建（原来抛 OperationalError）。"""
+
+    from infrastructure.db import Database
+
+    db_path = tmp_path / "nested" / "data" / "club.db"
+    assert not db_path.parent.exists()
+
+    db = Database(db_path)
+    try:
+        assert db_path.exists()
+    finally:
+        db.close()
+
+
+def test_close_rejects_open_transaction():
+    """阶段 0.3 新增：仍有未结束的事务时拒绝关闭连接（避免静默丢弃写入）。"""
+
+    import pytest
+
+    from infrastructure.db import Database
+
+    db = Database(":memory:")
+    with db.transaction():
+        with pytest.raises(RuntimeError):
+            db.close()
+
+    db.close()          # 事务退出后可以正常关闭
+
+
+def test_context_manager_closes_connection():
+    """阶段 0.3 新增：with Database(...) 退出后连接已关闭。"""
+
+    import sqlite3
+
+    import pytest
+
+    from infrastructure.db import Database
+
+    with Database(":memory:") as db:
+        assert db.conn.execute("SELECT 1").fetchone()[0] == 1
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        db.conn.execute("SELECT 1")
