@@ -1,3 +1,14 @@
+"""领域模型（数据类 + 枚举）。
+
+阶段 0.4 修正（既有缺陷）：字段名与类型名同名时，注解会被字段本身遮蔽。
+``date: date = field(default_factory=date.today)`` 这种写法里，CPython 会先把
+右边的值存进类命名空间，再求值左边的注解，于是注解拿到的是 ``Field`` 对象
+而不是 ``datetime.date``：写库不受影响，但 ``get_type_hints()`` /
+``dataclasses.fields().type`` 会得到错误类型，读回时无法按类型还原。
+因此凡是名为 ``date`` 的字段，注解统一写成 ``datetime.date``。
+"""
+
+import datetime
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
@@ -29,7 +40,7 @@ class Record:
     printer_name: str = ""
     filament_name: str = ""
     consumption: float = 0.0
-    date: date = field(default_factory=date.today)
+    date: datetime.date = field(default_factory=date.today)
     operator_id: int = 0        # 记录人，运营2
     is_charged: bool = False
     fee: float = 0.0
@@ -44,7 +55,7 @@ class QuotaTransaction:
     type: str = ""                    # init / print / contribution_reward / manual_adjust
     related_record_id: Optional[int] = None
     operator_id: int = 0
-    date: date = field(default_factory=date.today)
+    date: datetime.date = field(default_factory=date.today)
     note: Optional[str] = None
 
 @dataclass
@@ -64,7 +75,7 @@ class InventoryTransaction:
     type: str = ""                    # purchase / print / adjust
     related_record_id: Optional[int] = None
     operator_id: int = 0
-    date: date = field(default_factory=date.today)
+    date: datetime.date = field(default_factory=date.today)
     note: Optional[str] = None
 
 @dataclass
@@ -72,7 +83,7 @@ class FundTransaction:
     id: Optional[int] = None
     amount: float = 0.0
     type: str = ""                    # income / expense
-    date: date = field(default_factory=date.today)
+    date: datetime.date = field(default_factory=date.today)
     operator_id: int = 0
     note: Optional[str] = None
 
@@ -95,6 +106,6 @@ class Contribution:
     type: str = ""                    # money / material
     material_desc: Optional[str] = None
     reward_quota: float = 0.0
-    date: date = field(default_factory=date.today)
+    date: datetime.date = field(default_factory=date.today)
     operator_id: int = 0
     note: Optional[str] = None

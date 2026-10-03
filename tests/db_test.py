@@ -82,8 +82,8 @@ def test_repo_create():
     assert member.name == "Alice"
     assert member.qq == "123456789"
     assert member.student_id == "10101"
-    assert member.role == Role.MEMBER
-    assert member.join_date == "2026-09-01"
+    assert member.role is Role.MEMBER                   # 阶段 0.4：枚举被还原成 Role
+    assert member.join_date == date(2026, 9, 1)         # 阶段 0.4：原来是 "2026-09-01" 字符串
     assert member.note == "No notes"
 
 
