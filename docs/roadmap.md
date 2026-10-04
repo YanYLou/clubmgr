@@ -91,7 +91,7 @@ Web 端要点：账号只是"证明你是哪个社员"，权限仍取自该社�
 | 3.2 | **全局低库存阈值 + 站内通知**：`settings` + `notifications` 两张表、出库跨阈值告警两位运营、通知页与告警条、`notify`/`settings` 命令、`doctor` 提示 | ✅ `domain/services.py` · ✅ `interfaces/views/notifications.py` · ✅ CLI | `b064f37` · `f2ef237` |
 | 3.3 | **打印机资源**：3 台，状态 空闲 / 使用中 / 维修中；老师与运营可标记使用、社长副社长老师可标维修；可用台数实时可见并供排班算容量 | ✅ `printers` 表 · ✅ `PrinterService` · ✅ Web `/printers` · ✅ CLI `printer` | `b0f5563` |
 | 3.4 | **紧急任务**：`reservation urgent`（提到本周 + 插到最前面，当天其他人顺延并收到通知）、`bump`（挤掉 → 待重排 + 通知本人）、留痕 `urgent_by/reason/at`、Web 紧急区与待重排区 | ✅ `ReservationService` · ✅ Web · ✅ CLI | `1eca770` |
-| 3.5 | **自助注册**：填资料 → 待人事审核 → 通过后才能登录 | ❌ | — |
+| 3.5 | **自助注册**：`/signup` 填资料 → 待人事审核 → 通过后才能登录；`approve_signup` 权限（人事 + 社长 / 副社长 / 老师）；驳回保留记录 | ✅ `UserService.signup/approve_signup` · ✅ Web · ✅ CLI | `8455814` |
 | 3.6 | **时间格排班**：可编辑时间格（默认 16:55–17:40）、容量按可用打印机台数、手工排 + 一键填充 | ❌ | — |
 
 ### 阶段 3 的权限现状（3.1 完成后）

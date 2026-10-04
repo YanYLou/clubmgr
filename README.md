@@ -18,17 +18,18 @@
 | 连接与事务 `infrastructure/db.py` | ✅ | 自动建目录、WAL、可嵌套事务（SAVEPOINT）、`close()` 守卫、结构版本校验 |
 | 泛型仓储 `SQLite3Repository` | ✅ | 反射 dataclass 字段生成 CRUD；读回时按类型注解还原 `Role` / `date` / `datetime` |
 | 具体仓储（13 个） | ✅ | 社员 / 打印 / 额度 / 耗材 / 库存 / 经费 / 贡献 / 预约 / 账号 / 配置 / 通知 / 打印机 |
-| 权限矩阵 `domain/permissions.py` | ✅ | 19 个动作；副社长分 1/2 号、`teacher` 与社长同级、两位运营权限共享 |
+| 权限矩阵 `domain/permissions.py` | ✅ | 20 个动作；副社长分 1/2 号、`teacher` 与社长同级、两位运营权限共享 |
 | 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印 / 耗材 / 经费 / 贡献 / 预约 / 报表 / 账号 / 配置 / 通知 / 余量告警 / 打印机 |
 | 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 + 体检 / 备份 / 导出 / 通知 / 配置 / 打印机 |
 | Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 各业务页面 + 通知页 + 打印机页 |
 | 登录与账号（`users` 表） | ✅ | pbkdf2 口令哈希 + 会话登录；账号权限仍取自关联社员的角色 |
+| 自助注册 | ✅ | 社员自己填资料 → 待人事审核 → 通过后才能登录（可驳回，记录保留） |
 | 低库存告警 | ✅ | 全局阈值（`settings`）+ 出库跨阈值时给两位运营发站内通知（`notifications`） |
 | 打印机资源 | ✅ | 3 台机器：空闲 / 使用中（谁、到几点）/ 维修中；老师与运营可标记，可用台数实时可见 |
 | 装配 `main.py` | ✅ | `build_repositories` / `build_services` / `open_services` + CLI / Web 入口 |
 | 运维工具 | ✅ | `doctor` 体检、`backup` 热备份、`report export` 公示报表（Web 维护页也可用） |
 | 预约排期 `reservations` | ✅ | 谁都能提交，社长 / 副社长 / 运维审核通过后才进排班表（结构版本 4） |
-| 测试与 CI | ✅ | 163 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表、预约与紧急任务、通知、打印机；GitHub Actions 自动跑 |
+| 测试与 CI | ✅ | 175 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表、预约与紧急任务、通知、打印机、注册；GitHub Actions 自动跑 |
 
 一句话：**日常运营闭环（社员 / 打印 / 额度 / 库存 / 经费 / 预约 / 公示 / 备份）都已经可用，
 命令行与 Web 双入口。**
@@ -114,6 +115,28 @@ python main.py --operator 10006 reservation reschedule
   两种操作都留痕（`urgent_by` / `urgent_reason` / `urgent_at`），排班表里显示［紧急］与原因。
 - Web 端有同样的页面：导航「预约」→ 排班表 + 提交表单 + 我的预约 + 审核队列，
   有权限时还会显示「紧急任务」与「待重排」两个区块。
+
+## 自助注册（填资料 → 人事审核）
+
+社员自己在 Web 上注册（`/signup`，登录页有入口），提交后是**待审核**状态，**人事审核通过才能登录**。
+
+```powershell
+# 社员自己提交（不需要 --operator）
+python main.py user signup --name 李四 --student-id 10008 --username lisi ^
+    --password lisi123456 --qq 123456 --note "高一 3 班"
+
+# 人事 / 社长 / 副社长 / 老师审核
+python main.py --operator 10010 user pending
+python main.py --operator 10010 user approve --id 1
+python main.py --operator 10010 user reject --id 2 --note "不是本校学生"
+```
+
+- 校验：姓名 / 学号 / 账号名（≥3 字符）/ 口令（≥6 位）都必填；学号与账号名不能与已有的重复
+  （学号已在名册里会提示联系人事开通账号）。
+- 注册成功会**同时**建一条待审核的社员记录与账号；通过时两者一起生效，驳回时都标成 `rejected`
+  （记录保留，方便回查）。
+- 审核前登录会看到明确提示："账号还在等待人事审核 / 这次注册被驳回了 / 账号已被停用"。
+- Web 端「账号」页有"待审核的注册"区块（人事也能进这个页面）；`/signup` 有同 IP 每分钟 10 次的限流。
 
 ## 打印机
 
@@ -229,7 +252,7 @@ clubmgr/
 │   ├─ app.py                  # Flask 应用工厂
 │   ├─ views/                  # 12 个蓝图（认证/首页/社员/打印/耗材/额度/经费/预约/通知/打印机/账号/维护）
 │   └─ templates/              # Jinja 模板
-├─ tests/                      # pytest 测试（163 个用例）
+├─ tests/                      # pytest 测试（175 个用例）
 ├─ .github/workflows/tests.yml # CI：push / PR 自动跑测试
 └─ docs/                       # 设计文档与路线图
 ```
