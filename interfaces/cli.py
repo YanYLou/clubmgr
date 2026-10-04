@@ -16,14 +16,18 @@ CLI 只负责解析参数与打印结果。
 
 import argparse
 import json
+import sqlite3
 import sys
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import date
 from enum import Enum
+from pathlib import Path
 from typing import Any, Sequence
 
 from domain.models import Role
-from infrastructure.db import Database
+from infrastructure.backup import (DEFAULT_KEEP, create_backup,
+                                   default_backup_dir, list_backups)
+from infrastructure.db import SCHEMA_VERSION, Database
 from main import DB_PATH, build_services
 
 
@@ -40,6 +44,7 @@ class Result:
     rows: list[list[str]] = field(default_factory=list)
     payload: Any = None
     extra: list[str] = field(default_factory=list)
+    exit_code: int = 0
 
 
 def _fmt(value: Any) -> str:
@@ -269,6 +274,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = user.add_parser("disable", help="停用账号")
     p.add_argument("--user", required=True, help="账号 id 或账号名")
     p.set_defaults(handler=_user_disable)
+
+    # --- 维护（阶段 2.4）--------------------------------------------------
+    p = top.add_parser("doctor", help="体检：结构版本、完整性、外键与可疑数据")
+    p.set_defaults(handler=_doctor, needs_services=False)
+
+    p = top.add_parser("backup", help="数据库热备份（默认保留最近 10 份）")
+    p.add_argument("--out", help="备份目录（默认 data/backups）")
+    p.add_argument("--keep", type=int, default=DEFAULT_KEEP, help="保留最近几份")
+    p.add_argument("--list", action="store_true", help="只列出已有备份")
+    p.set_defaults(handler=_backup, needs_services=False)
 
     # --- web（阶段 2.2）---------------------------------------------------
     p = top.add_parser("web", help="启动 Web 界面（浏览器里记打印、查额度）")
@@ -560,6 +575,104 @@ def _user_disable(args, services) -> Result:
                   [_user_row(services, updated)])
 
 
+# ---------------------------------------------------------------------------
+# 维护命令（阶段 2.4）：体检与备份
+# ---------------------------------------------------------------------------
+
+def _doctor(args, services) -> Result:
+    """体检：结构版本、完整性、外键、可疑数据。有异常时退出码为 1。"""
+    db_path = Path(args.db or DB_PATH)
+    headers = ["检查项", "结果", "说明"]
+    if not db_path.exists():
+        return Result(f"数据库不存在：{db_path}", headers,
+                      [["数据库文件", "异常", str(db_path)]],
+                      {"ok": False, "database": str(db_path)}, exit_code=1)
+
+    checks: list[list[str]] = []
+    warnings: list[str] = []
+    connection = sqlite3.connect(db_path)
+    try:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        checks.append(["结构版本", "OK" if version == SCHEMA_VERSION else "异常",
+                       f"user_version={version}"
+                       if version == SCHEMA_VERSION
+                       else f"库={version}，程序需要={SCHEMA_VERSION}（开发阶段删库重建）"])
+
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        checks.append(["数据完整性", "OK" if integrity == "ok" else "异常", integrity])
+
+        violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+        checks.append(["外键一致性", "OK" if not violations else "异常",
+                       f"{len(violations)} 条违规"])
+
+        counts = {table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                  for table in ("members", "filaments", "records",
+                                "quota_transactions", "inventory_transactions",
+                                "fund_transactions", "contributions", "users")}
+        checks.append(["数据量", "OK",
+                       "，".join(f"{name}={value}" for name, value in counts.items())])
+
+        overdrafts = connection.execute(
+            "SELECT m.name, COALESCE(SUM(q.amount), 0) AS balance FROM members m "
+            "JOIN quota_transactions q ON q.member_id = m.id "
+            "GROUP BY m.id HAVING balance < 0 ORDER BY balance").fetchall()
+        if overdrafts:
+            warnings.append("额度透支（规则允许，记得催缴）："
+                            + "，".join(f"{name} {balance:g} 克" for name, balance in overdrafts))
+
+        negative_stock = connection.execute(
+            "SELECT f.name, COALESCE(SUM(i.amount), 0) AS stock FROM filaments f "
+            "JOIN inventory_transactions i ON i.filament_id = f.id "
+            "GROUP BY f.id HAVING stock < 0").fetchall()
+        if negative_stock:
+            warnings.append("库存为负（多半是采购没入账）："
+                            + "，".join(f"{name} {stock:g} 克" for name, stock in negative_stock))
+
+        if counts["members"] and counts["users"] == 0:
+            warnings.append("有社员但没有任何登录账号，Web 界面登录不了，"
+                            "请先 python main.py --operator <社长id> user add ...")
+
+        duplicated = connection.execute(
+            "SELECT m.name, COUNT(*) AS times FROM quota_transactions q "
+            "JOIN members m ON m.id = q.member_id WHERE q.type = 'init' "
+            "GROUP BY q.member_id HAVING times > 1").fetchall()
+        if duplicated:
+            warnings.append("重复发放过学期额度："
+                            + "，".join(f"{name}（{times} 次）" for name, times in duplicated))
+    finally:
+        connection.close()
+
+    failed = [row for row in checks if row[1] == "异常"]
+    title = (f"体检完成：发现 {len(failed)} 项异常" if failed
+             else "体检完成：数据库正常")
+    extra = (["", "提示："] + [f"- {text}" for text in warnings]) if warnings else []
+    payload = {"ok": not failed, "checks": checks, "warnings": warnings,
+               "database": str(db_path)}
+    return Result(title, headers, checks, payload, extra,
+                  exit_code=1 if failed else 0)
+
+
+def _backup(args, services) -> Result:
+    """热备份数据库，或列出已有备份。"""
+    db_path = Path(args.db or DB_PATH)
+    out_dir = Path(args.out) if args.out else default_backup_dir(db_path)
+
+    if args.list:
+        files = list_backups(out_dir)
+        rows = [[path.name, f"{path.stat().st_size / 1024:.1f} KB", str(path.parent)]
+                for path in reversed(files)]
+        payload = [{"path": str(path), "size": path.stat().st_size} for path in files]
+        return Result(f"备份列表（{len(files)} 份）：{out_dir}",
+                      ["文件", "大小", "目录"], rows, payload)
+
+    backup = create_backup(db_path, out_dir, keep=args.keep)
+    size = backup.stat().st_size
+    return Result(f"已备份并校验通过：{backup}",
+                  ["文件", "大小", "保留份数"],
+                  [[backup.name, f"{size / 1024:.1f} KB", str(args.keep)]],
+                  {"path": str(backup), "size": size, "keep": args.keep})
+
+
 def _web(args, services) -> Result:
     """启动 Flask 应用（自带服务日志，Ctrl+C 停止）。"""
     from interfaces.app import create_app
@@ -574,6 +687,10 @@ def _web(args, services) -> Result:
 # 入口
 # ---------------------------------------------------------------------------
 
+# 业务错误一律变成一行提示 + 退出码 1，不给用户看 traceback
+_HANDLED_ERRORS = (ValueError, PermissionError, RuntimeError, OSError, sqlite3.Error)
+
+
 def _emit(args, result: Result | None) -> int:
     if result is None:
         return 0
@@ -582,23 +699,27 @@ def _emit(args, result: Result | None) -> int:
     else:
         for line in _render(result):
             print(line)
-    return 0
+    return result.exit_code
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    # web 子命令自己开连接（长期运行），不需要外层再装配一套服务
+    # web / backup / doctor 自己开连接（web 还要长期运行），不需要外层再装配一套服务
     if not getattr(args, "needs_services", True):
-        return _emit(args, args.handler(args, None))
+        try:
+            return _emit(args, args.handler(args, None))
+        except _HANDLED_ERRORS as exc:
+            print(f"错误：{exc}", file=sys.stderr)
+            return 1
 
     db = Database(args.db or DB_PATH)
     try:
         services = build_services(db)
         try:
             result = args.handler(args, services)
-        except (ValueError, PermissionError, RuntimeError) as exc:
+        except _HANDLED_ERRORS as exc:
             print(f"错误：{exc}", file=sys.stderr)
             return 1
     finally:

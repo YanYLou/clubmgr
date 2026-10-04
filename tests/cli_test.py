@@ -125,3 +125,60 @@ def test_cli_user_commands(cli):
               "--password", "admin123", "--member", "10001", expect_code=1)
     assert "至少" in err
 
+
+# ---------------------------------------------------------------------------
+# 维护命令（阶段 2.4）
+# ---------------------------------------------------------------------------
+
+def test_cli_backup_and_list(cli, tmp_path):
+    cli("member", "bootstrap", "--name", "社长", "--student-id", "10001")
+
+    out = cli("backup")
+    assert "已备份并校验通过" in out
+    assert "club-" in out
+
+    backups = list((tmp_path / "backups").glob("club-*.db"))
+    assert len(backups) == 1
+
+    out = cli("backup", "--list")
+    assert "备份列表（1 份）" in out
+    assert backups[0].name in out
+
+
+def test_cli_backup_without_database(tmp_path, capsys):
+    from interfaces.cli import main as cli_main
+
+    code = cli_main(["--db", str(tmp_path / "nope.db"), "backup"])
+    assert code == 1
+    assert "数据库不存在" in capsys.readouterr().err
+
+
+def test_cli_doctor_reports_healthy_database(cli, tmp_path):
+    out = cli("member", "bootstrap", "--name", "社长", "--student-id", "10001")
+    assert out
+
+    out = cli("doctor")
+    assert "数据库正常" in out
+    assert "结构版本" in out and "数据完整性" in out
+    # 还没有登录账号 → 应该提示
+    assert "没有任何登录账号" in out
+
+
+def test_cli_doctor_flags_broken_schema(tmp_path, capsys):
+    import sqlite3
+
+    from interfaces.cli import main as cli_main
+
+    db_path = tmp_path / "old.db"
+    cli_main(["--db", str(db_path), "member", "bootstrap", "--name", "社长"])
+    connection = sqlite3.connect(db_path)
+    connection.execute("PRAGMA user_version = 1")       # 假装是旧结构
+    connection.close()
+    capsys.readouterr()
+
+    code = cli_main(["--db", str(db_path), "doctor"])
+
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "结构版本" in out and "异常" in out
+
