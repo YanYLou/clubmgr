@@ -13,21 +13,22 @@
 
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
-| 领域模型 `domain/models.py` | ✅ | 11 个 dataclass（含 `User` / `Setting` / `Notification`）+ `Role` 枚举 |
-| 建表 `infrastructure/schema.sql` | ✅ | 11 张表 + 索引；额度 / 库存 / 经费全部走流水（结构版本 5） |
+| 领域模型 `domain/models.py` | ✅ | 12 个 dataclass（含 `User` / `Setting` / `Notification` / `Printer`）+ `Role` 枚举 |
+| 建表 `infrastructure/schema.sql` | ✅ | 12 张表 + 索引；额度 / 库存 / 经费全部走流水（结构版本 6） |
 | 连接与事务 `infrastructure/db.py` | ✅ | 自动建目录、WAL、可嵌套事务（SAVEPOINT）、`close()` 守卫、结构版本校验 |
 | 泛型仓储 `SQLite3Repository` | ✅ | 反射 dataclass 字段生成 CRUD；读回时按类型注解还原 `Role` / `date` / `datetime` |
-| 具体仓储（12 个） | ✅ | 社员 / 打印 / 额度 / 耗材 / 库存 / 经费 / 贡献 / 预约 / 账号 / 配置 / 通知 |
-| 权限矩阵 `domain/permissions.py` | ✅ | 16 个动作；副社长分 1/2 号、`teacher` 与社长同级、两位运营权限共享 |
-| 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印（三表同事务）/ 耗材 / 经费 / 贡献 / 预约 / 报表 / 账号 / 配置 / 通知 / 余量告警 |
-| 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 + 体检 / 备份 / 导出 / 通知 / 配置 |
-| Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 各业务页面 + 通知页（未读角标与告警条） |
+| 具体仓储（13 个） | ✅ | 社员 / 打印 / 额度 / 耗材 / 库存 / 经费 / 贡献 / 预约 / 账号 / 配置 / 通知 / 打印机 |
+| 权限矩阵 `domain/permissions.py` | ✅ | 18 个动作；副社长分 1/2 号、`teacher` 与社长同级、两位运营权限共享 |
+| 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印 / 耗材 / 经费 / 贡献 / 预约 / 报表 / 账号 / 配置 / 通知 / 余量告警 / 打印机 |
+| 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 + 体检 / 备份 / 导出 / 通知 / 配置 / 打印机 |
+| Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 各业务页面 + 通知页 + 打印机页 |
 | 登录与账号（`users` 表） | ✅ | pbkdf2 口令哈希 + 会话登录；账号权限仍取自关联社员的角色 |
 | 低库存告警 | ✅ | 全局阈值（`settings`）+ 出库跨阈值时给两位运营发站内通知（`notifications`） |
+| 打印机资源 | ✅ | 3 台机器：空闲 / 使用中（谁、到几点）/ 维修中；老师与运营可标记，可用台数实时可见 |
 | 装配 `main.py` | ✅ | `build_repositories` / `build_services` / `open_services` + CLI / Web 入口 |
 | 运维工具 | ✅ | `doctor` 体检、`backup` 热备份、`report export` 公示报表（Web 维护页也可用） |
 | 预约排期 `reservations` | ✅ | 谁都能提交，社长 / 副社长 / 运维审核通过后才进排班表（结构版本 4） |
-| 测试与 CI | ✅ | 141 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表、预约、通知；GitHub Actions 自动跑 |
+| 测试与 CI | ✅ | 154 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表、预约、通知、打印机；GitHub Actions 自动跑 |
 
 一句话：**日常运营闭环（社员 / 打印 / 额度 / 库存 / 经费 / 预约 / 公示 / 备份）都已经可用，
 命令行与 Web 双入口。**
@@ -101,6 +102,24 @@ python main.py --operator 10005 reservation cancel --id 1
   但**提交**不受限：被驳回或撤销后可以重新提交。
 - 审核通过时自动分配当天序号（也可手工指定），排班表按序号排列。
 - Web 端有同样的页面：导航「预约」→ 排班表 + 提交表单 + 我的预约 + 审核队列（有权限时）。
+
+## 打印机
+
+社团 3 台机器，老师也会用；**谁都能看状态**，运营1 据此知道还剩几台可用（排班容量也按它算）。
+
+```powershell
+python main.py --operator 10001 printer add --name "打印机 4" --model "A1"
+python main.py --operator T001 printer use --id 1 --until "2026-10-04 17:40" --note "打教具"
+python main.py --operator 10001 printer release --id 1
+python main.py --operator 10001 printer maintain --id 3 --note "热床不加热，等配件"
+python main.py --operator T001 printer fixed --id 3
+python main.py printer list                     # 状态 + 空闲台数
+```
+
+- 状态：**空闲 / 使用中（谁、预计到几点）/ 维修中（原因）**；维修中不能直接当使用中。
+- 权限：**使用中 / 释放** = 老师 + 两位运营 + 社长副社长（可代记使用人）；
+  **维修中 / 修好 / 增删改机器** = 社长 + 副社长1号 + 副社长2号 + 老师（维修必须写原因）。
+- Web 端在「打印机」页操作，首页也有概览卡片；`printer list` 里 `空闲 N 台` 就是当时可排的机器数。
 
 ## 通知与全局配置
 
@@ -196,9 +215,9 @@ clubmgr/
 │   ├─ cli.py                  # 命令行（含 doctor / backup / report export）
 │   ├─ reports.py              # 公示报表渲染（Markdown / CSV）
 │   ├─ app.py                  # Flask 应用工厂
-│   ├─ views/                  # 11 个蓝图（认证/首页/社员/打印/耗材/额度/经费/预约/通知/账号/维护）
+│   ├─ views/                  # 12 个蓝图（认证/首页/社员/打印/耗材/额度/经费/预约/通知/打印机/账号/维护）
 │   └─ templates/              # Jinja 模板
-├─ tests/                      # pytest 测试（141 个用例）
+├─ tests/                      # pytest 测试（154 个用例）
 ├─ .github/workflows/tests.yml # CI：push / PR 自动跑测试
 └─ docs/                       # 设计文档与路线图
 ```
@@ -221,7 +240,7 @@ clubmgr/
 `view_funds`（经费余额与流水）。旧数据里的 `vice_president` 会被当作副社长1号
 （`Role.parse` 兼容）。
 
-## 数据模型（11 张表）
+## 数据模型（12 张表）
 
 | 表 | 语义 |
 | --- | --- |
@@ -236,6 +255,7 @@ clubmgr/
 | `users` | 登录账号（关联社员，口令 pbkdf2 哈希） |
 | `settings` | 全局配置（键值对，目前放低库存阈值） |
 | `notifications` | 站内通知（`member_id` 是收件人，`ref` 指向关联对象） |
+| `printers` | 打印机（状态 空闲 / 使用中 / 维修中，使用中记 `used_by` 与 `expected_end`） |
 
 ## 设计约定
 
