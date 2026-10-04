@@ -55,28 +55,34 @@ python main.py member bootstrap --name 社长 --student-id 10001
 # 4. 建一个登录账号（Web 界面需要；本地测试账号就用 admin / admin123）
 python main.py --operator 10001 user add --username admin --password admin123 --member 10001
 
-# 5. 启动 Web 界面，浏览器打开 http://127.0.0.1:5000/ 用上面的账号登录
+# 5. 启动 Web 界面（默认监听 0.0.0.0:5000，本机打开 http://127.0.0.1:5000/ 用上面的账号登录）
 python main.py web
 ```
 
 ## Web 界面
 
 ```powershell
-python main.py web                      # 默认 127.0.0.1:5000
-python main.py web --host 0.0.0.0 --port 8080   # 让同社团的人在内网访问
+python main.py web                      # 默认监听 0.0.0.0:5000（所有网卡，内网可访问）
+python main.py web --host 127.0.0.1     # 只允许本机访问
+python main.py web --port 8080          # 换端口
 flask --app interfaces.app:create_app run --debug   # 等价写法（开发模式）
 ```
 
 页面：首页概览（自己的额度 + 社长视角的全社额度 / 库存 / 经费）、我的额度单、
-社员名册与增改退社、打印记录与「记打印」、耗材与库存、额度发放与调整、经费流水与贡献、账号管理。
+社员名册与增改退社、打印记录与「记打印」、耗材与库存、额度发放与调整、经费流水与贡献、
+预约与排班、打印机、通知、账号管理与注册审核。
 
 要点：
 
-- **必须先建账号**：`user add`（见上面第 4 步）或让社长在「账号」页面创建；
-  账号只是"证明你是哪个社员"，权限仍然取自该社员的角色。
+- **默认监听 `0.0.0.0`（所有网卡）**：启动后终端会打印本机地址与局域网地址，
+  同一个 WiFi / 校园网里的手机、平板直接输局域网地址就能用；只想本机用就加 `--host 127.0.0.1`。
+- **必须先建账号**：`user add`（见上面第 4 步）、社长在「账号」页面创建，
+  或让社员自己 `/signup` 注册后由人事审核；账号只是"证明你是哪个社员"，权限仍然取自该社员的角色。
 - 会话密钥优先读环境变量 `CLUBMGR_SECRET_KEY`，没有就在 `data/secret_key` 里生成一个并复用。
-- 服务是 Flask 开发服务器，只适合社团内网 / 本机使用；页面写入全部走服务层，
+- 服务是 Flask 开发服务器，**只在校内网 / 本机用**（别映射到公网）；页面写入全部走服务层，
   权限、事务、额度规则与 CLI 完全一致。
+- 局域网其他设备连不上时，多半是 Windows 防火墙拦了入站，放行对应端口即可：
+  `New-NetFirewallRule -DisplayName "clubmgr" -Direction Inbound -LocalPort 5000 -Protocol TCP -Action Allow`
 
 ## 预约（提交 → 审核 → 排班）
 

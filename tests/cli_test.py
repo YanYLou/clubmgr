@@ -275,6 +275,18 @@ def test_cli_settings_set_requires_admin(cli):
     assert "权限" in err
 
 
+def test_cli_web_listens_on_all_interfaces_by_default():
+    """默认监听 0.0.0.0（局域网内其他设备可访问），也能显式改回只给本机。"""
+    from interfaces.cli import build_parser
+
+    parser = build_parser()
+
+    assert parser.parse_args(["web"]).host == "0.0.0.0"
+    assert parser.parse_args(["web"]).port == 5000
+    assert parser.parse_args(["web", "--host", "127.0.0.1"]).host == "127.0.0.1"
+    assert parser.parse_args(["web", "--port", "8080"]).port == 8080
+
+
 # ---------------------------------------------------------------------------
 # 时间格排班（阶段 3.6）
 # ---------------------------------------------------------------------------

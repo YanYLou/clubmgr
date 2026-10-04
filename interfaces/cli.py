@@ -487,7 +487,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --- web（阶段 2.2）---------------------------------------------------
     p = top.add_parser("web", help="启动 Web 界面（浏览器里记打印、查额度）")
-    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--host", default="0.0.0.0",
+                   help="监听地址（默认 0.0.0.0 = 所有网卡，局域网内其他设备可访问；"
+                        "只想本机用就写 127.0.0.1）")
     p.add_argument("--port", type=int, default=5000)
     p.add_argument("--debug", action="store_true", help="开发模式（自动重载）")
     p.set_defaults(handler=_web, needs_services=False)
@@ -1378,12 +1380,39 @@ def _backup(args, services) -> Result:
                   {"path": str(backup), "size": size, "keep": args.keep})
 
 
+def _lan_addresses() -> list[str]:
+    """本机的局域网 IPv4 地址（给"内网怎么访问"提示用；不会真的发包）。"""
+    import socket
+
+    found: set[str] = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            found.add(info[4][0])
+    except OSError:
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("223.5.5.5", 80))       # UDP connect 只设对端，不发包
+            found.add(probe.getsockname()[0])
+    except OSError:
+        pass
+    return sorted(ip for ip in found if not ip.startswith("127."))
+
+
 def _web(args, services) -> Result:
     """启动 Flask 应用（自带服务日志，Ctrl+C 停止）。"""
     from interfaces.app import create_app
 
     app = create_app(args.db or DB_PATH)
-    print(f"Web 界面：http://{args.host}:{args.port}/   （Ctrl+C 停止）")
+    print(f"Web 界面已启动（Ctrl+C 停止）")
+    print(f"  本机：      http://127.0.0.1:{args.port}/")
+    if args.host in ("0.0.0.0", "::"):
+        for ip in _lan_addresses():
+            print(f"  局域网：    http://{ip}:{args.port}/")
+        print("  正在监听所有网卡（0.0.0.0）；只给本机用请加 --host 127.0.0.1")
+        print("  注意：这是开发用服务器，只在校内网用；连不上多半是 Windows 防火墙拦了入站。")
+    else:
+        print(f"  监听地址：  {args.host}:{args.port}")
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
     return Result("Web 服务已停止")
 
