@@ -1058,18 +1058,21 @@ class ScheduleService(_Service):
 
     def auto_fill(self, operator_id: int, week_start: date | None = None, *,
                   slot_date: date | None = None) -> dict:
-        """一键填充：把这一周"已通过但没排格子"的预约按顺序填进空格子。
+        """一键填充：把这一周"已通过但没排格子"的预约填进**它活动日那天**的空格子。
 
-        优先填到与它活动日相同的那一天；那天没格子或排满了，再按时间顺序找别的格子。
+        只填当天的：那天没有格子 / 停用 / 排满了就留在"没排格子"列表里等人工处理
+        （跨天硬塞会让人白跑一趟）。要排到别的日子请用 ``assign`` 手工指定。
         """
         self._operator(operator_id, "schedule")
         week = _week_start(week_start)
         self.ensure_week(operator_id, week)
 
         slots = [slot for slot in self.slot_repo.list_by_week(week)
-                 if slot.status == "open" and (slot_date is None or slot.slot_date == slot_date)]
+                 if slot.status == "open"
+                 and (slot_date is None or slot.slot_date == slot_date)]
         if not slots:
-            return {"week_start": week, "assigned": [], "skipped": [], "reason": "本周没有可用的时间格"}
+            return {"week_start": week, "assigned": [], "skipped": [],
+                    "reason": "本周没有可用的时间格"}
 
         counts = {slot.id: len(self.reservation_repo.list_by_slot(slot.id)) for slot in slots}
         capacities = {slot.id: self.capacity_of(slot) for slot in slots}
@@ -1096,11 +1099,14 @@ class ScheduleService(_Service):
 
     def _pick_slot(self, slots, counts, capacities, reservation,
                    week: date) -> ScheduleSlot | None:
+        """只在这一天里找空格子；活动日无法换算成日期时才退化成"任意格子"。"""
         offset = ACTIVITY_DAY_WEEKDAYS.get(reservation.activity_day)
-        wanted_date = week + timedelta(days=offset) if offset is not None else None
+        if offset is None:
+            candidates = list(slots)
+        else:
+            wanted_date = week + timedelta(days=offset)
+            candidates = [slot for slot in slots if slot.slot_date == wanted_date]
 
-        candidates = [slot for slot in slots if slot.slot_date == wanted_date] + \
-                     [slot for slot in slots if slot.slot_date != wanted_date]
         for slot in candidates:
             if counts[slot.id] >= capacities[slot.id]:
                 continue

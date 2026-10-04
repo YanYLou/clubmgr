@@ -21,7 +21,7 @@
     </form>
     <form method="post" action="{{ url_for('schedule.fill') }}" class="inline">
       <input type="hidden" name="week" value="{{ week }}">
-      <button class="ghost">一键填充本周（已通过的预约）</button>
+      <button class="ghost">一键填充本周（每人填到自己那天）</button>
     </form>
   </p>
   {% endif %}

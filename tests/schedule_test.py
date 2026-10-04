@@ -246,8 +246,8 @@ def test_auto_fill_respects_capacity_and_reports_skipped(services, club, club_op
     assert {r.id for r in result["skipped"]} == {second.id, third.id}
 
 
-def test_auto_fill_without_slots(services, club, club_ops):
-    """周三那格停用后，不限定某一天填充时，这条会被安排到别的空格子。"""
+def test_auto_fill_does_not_spill_to_other_days(services, club, club_ops):
+    """周三那格停用后，约周三的人**不会**被塞进周一/周五，而是留在待排列表里。"""
     services.schedule.ensure_week(club_ops.id, MONDAY)
     slots = services.schedule.week_view(club_ops.id, MONDAY)["slots"]
     services.schedule.close_slot(club_ops.id, slots[1]["slot"].id, note="场地被占")
@@ -255,8 +255,15 @@ def test_auto_fill_without_slots(services, club, club_ops):
     reservation = _approve(services, club_ops.id, club.member.id, "wed")
     result = services.schedule.auto_fill(club_ops.id, MONDAY)
 
-    assert [r.id for r in result["assigned"]] == [reservation.id]
-    assert services.reservation._reservation(reservation.id).slot_id != slots[1]["slot"].id
+    assert result["assigned"] == []
+    assert [r.id for r in result["skipped"]] == [reservation.id]
+    assert services.reservation._reservation(reservation.id).slot_id is None
+    assert [r.id for r in
+            services.schedule.week_view(club_ops.id, MONDAY)["unassigned"]] == [reservation.id]
+
+    # 但可以手工排到别的日子（例如临时改到周五）
+    moved = services.schedule.assign(club_ops.id, reservation.id, slots[2]["slot"].id)
+    assert moved.slot_id == slots[2]["slot"].id
 
 
 def test_auto_fill_with_day_filter_reports_when_no_slot(services, club, club_ops):

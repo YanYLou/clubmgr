@@ -139,5 +139,5 @@ def fill():
     else:
         skipped = len(result["skipped"])
         flash(f"一键填充完成：排进 {len(result['assigned'])} 条"
-              + (f"，{skipped} 条没位置（容量不够）" if skipped else ""), "ok")
+              + (f"，{skipped} 条当天没位置（留在下面手工安排）" if skipped else ""), "ok")
     return _back(result["week_start"])
