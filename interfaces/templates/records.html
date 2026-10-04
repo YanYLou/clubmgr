@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}打印记录{% endblock %}
+{% block body %}
+<div class="card">
+  <h2>打印记录</h2>
+  <form method="get" class="inline">
+    {% if can('view_records') %}
+      <label>社员（学号 / 姓名 / id）<input name="member_id" value="{{ member_id }}"></label>
+    {% endif %}
+    <label>起始日期<input name="start" placeholder="2026-09-01"></label>
+    <label>结束日期<input name="end" placeholder="2026-09-30"></label>
+    <button>筛选</button>
+  </form>
+  <p class="muted">
+    {% if can('view_records') %}显示全部社员的打印记录{% else %}只显示你自己的打印记录{% endif %}。
+    记录打印请点导航里的「记打印」。
+  </p>
+  <table>
+    <tr><th>#</th><th>日期</th><th>社员 id</th><th>耗材</th><th>克数</th>
+        <th>打印机</th><th>记录人</th><th>备注</th></tr>
+    {% for record in records %}
+      <tr>
+        <td>{{ record.id }}</td>
+        <td>{{ record.date }}</td>
+        <td>{{ record.member_id }}</td>
+        <td>{{ record.filament_name }}</td>
+        <td>{{ record.consumption|num }}</td>
+        <td>{{ record.printer_name or '-' }}</td>
+        <td>{{ record.operator_id }}</td>
+        <td>{{ record.comments or '-' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="muted">没有符合条件的记录</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

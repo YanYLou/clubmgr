@@ -18,8 +18,9 @@
 - 额度不足时**允许透支**，但只有社长 / 副社长能记（``allow_overdraft``）；
 - ``records`` 不再记钱（``fee`` / ``is_charged`` 已删除），因此没有收费相关权限。
 
-矩阵比设计文档多两个**读**权限：``view_inventory``（运营2 记打印时要先选耗材）与
-``view_funds``（经费只给社长 / 副社长看）。
+矩阵比设计文档多几个**读**权限：``view_members``（人事维护名册）、``view_records``
+（运营2 做打印统计）、``view_inventory``（运营2 记打印时要先选耗材）、``view_funds``
+（经费只给社长 / 副社长看），以及阶段 2.2 的 ``manage_users``（登录账号管理）。
 
 权限判断只在服务层做（``domain/services.py`` 调用 :func:`require`），接口层不重复判断。
 """
@@ -40,8 +41,10 @@ MATRIX: dict[str, frozenset[Role]] = {
     "manage_funds":    FULL,                      # 经费收支与贡献奖励
     "manage_users":    FULL,                      # 登录账号管理（阶段 2.2 新增）
     "view_own":        EVERYONE,                  # 查看自己的额度与记录
-    # 下面两个是阶段 1 新增的读权限：运营2 要选耗材才能记打印，所以能看耗材与库存；
-    # 经费只给社长 / 副社长看。
+    # 下面这些是读权限：不同角色要干的活不同，所以比设计文档更细一点。
+    # 运营2 要选耗材、要看打印记录做统计；人事要维护社员名册；经费只给社长/副社长。
+    "view_members":    FULL | {Role.HR},          # 社员名册
+    "view_records":    FULL | {Role.OP2},         # 打印记录列表与统计
     "view_inventory":  FULL | {Role.OP2},         # 耗材目录与库存
     "view_funds":      FULL,                      # 经费余额与流水
 }

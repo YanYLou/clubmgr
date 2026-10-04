@@ -247,6 +247,36 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--member", help="默认自己")
     p.set_defaults(handler=_report_statement)
 
+    # --- user（阶段 2.2）--------------------------------------------------
+    user = top.add_parser("user", help="登录账号").add_subparsers(
+        dest="action", required=True)
+
+    p = user.add_parser("add", help="创建账号")
+    p.add_argument("--username", required=True)
+    p.add_argument("--password", required=True)
+    p.add_argument("--member", required=True, help="关联社员：id / 学号 / 姓名")
+    p.add_argument("--note")
+    p.set_defaults(handler=_user_add)
+
+    p = user.add_parser("list", help="账号列表")
+    p.set_defaults(handler=_user_list)
+
+    p = user.add_parser("passwd", help="重置口令（本人，或社长 / 副社长）")
+    p.add_argument("--user", required=True, help="账号 id 或账号名")
+    p.add_argument("--password", required=True)
+    p.set_defaults(handler=_user_passwd)
+
+    p = user.add_parser("disable", help="停用账号")
+    p.add_argument("--user", required=True, help="账号 id 或账号名")
+    p.set_defaults(handler=_user_disable)
+
+    # --- web（阶段 2.2）---------------------------------------------------
+    p = top.add_parser("web", help="启动 Web 界面（浏览器里记打印、查额度）")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=5000)
+    p.add_argument("--debug", action="store_true", help="开发模式（自动重载）")
+    p.set_defaults(handler=_web, needs_services=False)
+
     return parser
 
 
@@ -465,12 +495,103 @@ def _report_statement(args, services) -> Result:
 
 
 # ---------------------------------------------------------------------------
+# 登录账号 / Web（阶段 2.2）
+# ---------------------------------------------------------------------------
+
+@dataclass
+class UserRow:
+    """账号列表的输出行（把社员姓名与角色也带上，便于核对）。"""
+
+    id: int
+    username: str
+    member_id: int
+    member_name: str
+    role: str
+    status: str
+
+
+def _user_row(services, user) -> UserRow:
+    member = services.user.member_of(user)
+    return UserRow(
+        id=user.id,
+        username=user.username,
+        member_id=user.member_id,
+        member_name=member.name if member else "?",
+        role=member.role.value if member else "?",
+        status=user.status,
+    )
+
+
+def _user_token(args, services):
+    user = services.user.find_user(args.user)
+    if user is None:
+        raise ValueError(f"找不到账号: {args.user}")
+    return user
+
+
+def _user_add(args, services) -> Result:
+    operator = _operator(args, services)
+    member = _member(args, services, args.member)
+    user = services.user.add_user(operator.id, args.username, args.password,
+                                  member.id, note=args.note)
+    return _table(f"已创建账号 {user.username}（关联社员 {member.name}）",
+                  [_user_row(services, user)])
+
+
+def _user_list(args, services) -> Result:
+    operator = _operator(args, services)
+    users = services.user.list_users(operator.id)
+    return _table("登录账号", [_user_row(services, user) for user in users])
+
+
+def _user_passwd(args, services) -> Result:
+    operator = _operator(args, services)
+    user = _user_token(args, services)
+    updated = services.user.set_password(operator.id, user.id, args.password)
+    return _table(f"已重置 {updated.username} 的口令",
+                  [_user_row(services, updated)])
+
+
+def _user_disable(args, services) -> Result:
+    operator = _operator(args, services)
+    user = _user_token(args, services)
+    updated = services.user.disable(operator.id, user.id)
+    return _table(f"已停用账号 {updated.username}",
+                  [_user_row(services, updated)])
+
+
+def _web(args, services) -> Result:
+    """启动 Flask 应用（自带服务日志，Ctrl+C 停止）。"""
+    from interfaces.app import create_app
+
+    app = create_app(args.db or DB_PATH)
+    print(f"Web 界面：http://{args.host}:{args.port}/   （Ctrl+C 停止）")
+    app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
+    return Result("Web 服务已停止")
+
+
+# ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
+
+def _emit(args, result: Result | None) -> int:
+    if result is None:
+        return 0
+    if args.json:
+        print(json.dumps(result.payload, ensure_ascii=False, indent=2, default=_fmt))
+    else:
+        for line in _render(result):
+            print(line)
+    return 0
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # web 子命令自己开连接（长期运行），不需要外层再装配一套服务
+    if not getattr(args, "needs_services", True):
+        return _emit(args, args.handler(args, None))
 
     db = Database(args.db or DB_PATH)
     try:
@@ -483,12 +604,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         db.close()
 
-    if args.json:
-        print(json.dumps(result.payload, ensure_ascii=False, indent=2, default=_fmt))
-    else:
-        for line in _render(result):
-            print(line)
-    return 0
+    return _emit(args, result)
 
 
 if __name__ == "__main__":

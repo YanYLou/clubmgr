@@ -251,6 +251,27 @@ def test_reports_respect_permissions(services, club):
         services.report.fund_report(club.op2.id)
 
 
+def test_staff_read_permissions(services, club):
+    """人事要维护名册、运营2 要做打印统计，普通社员只能看自己。"""
+    services.record.record_print(club.op2.id, club.member.id, club.filament.id, 5)
+
+    assert [m.name for m in services.member.list_members(club.hr.id)]           # 人事：名册
+    assert services.record.list_records(club.op2.id)                            # 运营2：打印记录
+    assert services.report.stock_report(club.op2.id) is not None                # 运营2：库存
+
+    # 普通社员不给 member_id 时只看到自己的记录
+    own = services.record.list_records(club.member.id)
+    assert [r.member_id for r in own] == [club.member.id]
+    with pytest.raises(PermissionError):
+        services.record.list_records(club.member.id, member_id=club.op2.id)
+
+    # 谁都别想越过权限看经费 / 名册
+    with pytest.raises(PermissionError):
+        services.report.fund_report(club.hr.id)
+    with pytest.raises(PermissionError):
+        services.member.list_members(club.op2.id)
+
+
 def test_member_statement_contains_records_and_quota(services, club):
     services.record.record_print(club.op2.id, club.member.id, club.filament.id, 20,
                                  date=date(2026, 9, 1))

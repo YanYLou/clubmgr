@@ -204,7 +204,7 @@ class MemberService(_Service):
 
     def list_members(self, operator_id: int, *, status: str | None = None,
                      role: Role | str | None = None) -> list[Member]:
-        self._operator(operator_id, "view_all")
+        self._operator(operator_id, "view_members")
         if role is not None:
             return self.member_repo.list_by_role(Role(role))
         if status is not None:
@@ -319,12 +319,15 @@ class RecordService(_Service):
 
     def list_records(self, operator_id: int, *, member_id: int | None = None,
                      start: date | None = None, end: date | None = None) -> list[Record]:
+        """打印记录：staff（运营2 / 社长 / 副社长）看全部，其他人默认看自己。"""
         operator = self._operator_only(operator_id)
+        staff = can(operator.role, "view_records")
         if member_id is not None:
-            if not can_view_member(operator.role, operator.id, member_id):
+            if operator.id != member_id and not staff:
                 raise PermissionError("只能查看自己的打印记录")
             return self.record_repo.list_by_member(member_id)
-        require(operator.role, "view_all")
+        if not staff:
+            return self.record_repo.list_by_member(operator.id)
         if start is not None and end is not None:
             return self.record_repo.list_by_date_range(start, end)
         return self.record_repo._list()
@@ -564,6 +567,17 @@ class UserService(_Service):
     def get_user(self, user_id: int) -> User | None:
         """按 id 取账号（Web 会话恢复用）。"""
         return self.user_repo._get(user_id)
+
+    def find_user(self, token: str) -> User | None:
+        """按账号名 / id 解析账号（CLI 用）。"""
+        token = (token or "").strip()
+        if not token:
+            return None
+        if token.isdigit():
+            found = self.user_repo._get(int(token))
+            if found is not None:
+                return found
+        return self.user_repo.find_by_username(token)
 
     def member_of(self, user: User) -> Member | None:
         """账号对应的社员，角色从这里取。"""

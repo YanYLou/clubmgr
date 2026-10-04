@@ -101,3 +101,27 @@ def test_cli_member_lifecycle(cli):
     assert "已退社" in cli("--operator", "10001", "member", "left", "--member", "10005")
     out = cli("--operator", "10001", "member", "list", "--status", "left")
     assert "李四" in out
+
+
+def test_cli_user_commands(cli):
+    """阶段 2.2：账号管理命令（同时也是 Web 登录用的初始账号创建方式）。"""
+    cli("member", "bootstrap", "--name", "社长", "--student-id", "10001")
+
+    out = cli("--operator", "10001", "user", "add", "--username", "admin",
+              "--password", "admin123", "--member", "10001")
+    assert "已创建账号 admin" in out
+
+    out = cli("--operator", "10001", "user", "list")
+    assert "admin" in out and "社长" in out and "president" in out
+
+    out = cli("--operator", "10001", "user", "passwd",
+              "--user", "admin", "--password", "newpass123")
+    assert "已重置 admin 的口令" in out
+
+    out = cli("--operator", "10001", "user", "disable", "--user", "admin")
+    assert "已停用账号 admin" in out
+
+    err = cli("--operator", "10001", "user", "add", "--username", "ab",
+              "--password", "admin123", "--member", "10001", expect_code=1)
+    assert "至少" in err
+

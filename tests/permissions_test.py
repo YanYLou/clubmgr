@@ -25,6 +25,8 @@ def test_every_role_can_view_own_data():
         (Role.HR, "edit_members", "write_record"),
         (Role.MEMBER, "view_own", "view_all"),
         (Role.OP2, "view_inventory", "view_funds"),      # 运营2 能看库存、看不到经费
+        (Role.OP2, "view_records", "view_members"),      # 运营2 看打印记录、不看名册
+        (Role.HR, "view_members", "view_records"),       # 人事看名册、不看打印记录
     ],
 )
 def test_role_specific_permissions(role, allowed, denied):

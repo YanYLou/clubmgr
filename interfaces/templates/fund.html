@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}经费{% endblock %}
+{% block body %}
+<div class="card">
+  <h2>经费余额</h2>
+  <p class="num {{ 'neg' if report.balance < 0 else '' }}">{{ report.balance|num }} 元</p>
+</div>
+
+<div class="card">
+  <h3>流水</h3>
+  <form method="get" class="inline">
+    <label>起始日期<input name="start" placeholder="2026-09-01"></label>
+    <label>结束日期<input name="end" placeholder="2026-09-30"></label>
+    <button>筛选</button>
+  </form>
+  <table>
+    <tr><th>#</th><th>日期</th><th>类型</th><th>金额(元)</th><th>记录人</th><th>备注</th></tr>
+    {% for txn in report.transactions %}
+      <tr>
+        <td>{{ txn.id }}</td>
+        <td>{{ txn.date }}</td>
+        <td>{{ txn.type }}</td>
+        <td class="{{ 'neg' if txn.amount < 0 else '' }}">{{ txn.amount|num }}</td>
+        <td>{{ txn.operator_id }}</td>
+        <td>{{ txn.note or '-' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">还没有经费流水</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if can('manage_funds') %}
+<div class="grid">
+  <div class="card">
+    <h3>记收入</h3>
+    <form method="post" action="{{ url_for('fund.income') }}" class="inline">
+      <label>金额(元)<input name="amount" type="number" step="0.01" required></label>
+      <label>说明（必填）<input name="note" required></label>
+      <label>日期<input name="date" placeholder="留空=今天"></label>
+      <button>记收入</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>记支出</h3>
+    <form method="post" action="{{ url_for('fund.expense') }}" class="inline">
+      <label>金额(元)<input name="amount" type="number" step="0.01" required></label>
+      <label>说明（必填）<input name="note" required></label>
+      <label>日期<input name="date" placeholder="留空=今天"></label>
+      <button>记支出</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>登记贡献 / 捐款</h3>
+    <form method="post" action="{{ url_for('fund.contribution') }}" class="inline">
+      <label>社员（学号 / 姓名 / id）<input name="member" required></label>
+      <label>类型
+        <select name="type">
+          <option value="money">money（钱）</option>
+          <option value="material">material（实物）</option>
+        </select>
+      </label>
+      <label>金额(元)<input name="amount" type="number" step="0.01" value="0"></label>
+      <label>实物说明<input name="material_desc" placeholder="PLA 1 卷"></label>
+      <label>奖励额度(克)<input name="reward_quota" type="number" step="1" value="0"></label>
+      <label>备注<input name="note"></label>
+      <button>登记</button>
+    </form>
+    <p class="muted">奖励额度大于 0 时会同时写一条额度流水。</p>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
