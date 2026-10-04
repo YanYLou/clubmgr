@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}排班{% endblock %}
+{% block body %}
+<div class="card">
+  <h2>时间格排班 · 周 {{ view.week_start }}</h2>
+  <p>
+    <a href="{{ url_for('schedule.index', week=prev_week) }}">← 上一周</a> ·
+    <a href="{{ url_for('schedule.index') }}">本周</a> ·
+    <a href="{{ url_for('schedule.index', week=next_week) }}">下一周 →</a>
+  </p>
+  <p class="muted">
+    默认每周一 / 三 / 五各一格 <strong>{{ default_start }}–{{ default_end }}</strong>；
+    每格能排几个人按<strong>当时空闲的打印机台数</strong>算（现在 {{ view.available_printers }} 台）。
+    改日期或停用某一格，会让原来排在那格的人变成"待重排"并收到通知。
+  </p>
+  {% if can_manage %}
+  <p>
+    <form method="post" action="{{ url_for('schedule.ensure') }}" class="inline">
+      <input type="hidden" name="week" value="{{ week }}">
+      <button>按默认规则补齐本周时间格</button>
+    </form>
+    <form method="post" action="{{ url_for('schedule.fill') }}" class="inline">
+      <input type="hidden" name="week" value="{{ week }}">
+      <button class="ghost">一键填充本周（已通过的预约）</button>
+    </form>
+  </p>
+  {% endif %}
+  <table>
+    <tr><th>日期</th><th>星期</th><th>时间</th><th>位置</th><th>已排的人</th>
+        <th>备注</th>{% if can_manage %}<th>操作</th>{% endif %}</tr>
+    {% for item in view.slots %}
+      <tr>
+        <td>{{ item.slot.slot_date }}</td>
+        <td>{{ item.weekday_label }}</td>
+        <td>{{ item.slot.start_time }}–{{ item.slot.end_time }}</td>
+        <td>
+          {{ item.assigned|length }}/{{ item.capacity }}
+          {% if item.slot.capacity == 0 %}<span class="muted">（按机器数）</span>{% endif %}
+          {% if item.slot.status == 'closed' %}<strong class="neg">已停用</strong>{% endif %}
+        </td>
+        <td>
+          {% for r in item.assigned %}
+            {{ r.order_no }}. {{ view.names.get(r.member_id, '#' ~ r.member_id) }}
+            {% if r.urgent_reason %}<strong class="neg">［紧急］</strong>{% endif %}
+            {% if can_manage %}
+            <form method="post"
+                  action="{{ url_for('schedule.unassign', reservation_id=r.id) }}"
+                  class="inline">
+              <button class="ghost">取出</button>
+            </form>
+            {% endif %}
+            <br>
+          {% else %}
+            <span class="muted">（空）</span>
+          {% endfor %}
+        </td>
+        <td>{{ item.slot.note or '-' }}</td>
+        {% if can_manage %}
+        <td>
+          <form method="post" action="{{ url_for('schedule.update', slot_id=item.slot.id) }}"
+                class="inline">
+            <input name="slot_date" type="date" value="{{ item.slot.slot_date }}">
+            <input name="start_time" value="{{ item.slot.start_time }}" style="width:5rem">
+            <input name="end_time" value="{{ item.slot.end_time }}" style="width:5rem">
+            <input name="capacity" type="number" min="0" placeholder="容量"
+                   value="{{ item.slot.capacity }}" style="width:5rem">
+            <button>保存</button>
+          </form>
+          {% if item.slot.status == 'open' %}
+          <form method="post" action="{{ url_for('schedule.close', slot_id=item.slot.id) }}"
+                class="inline" onsubmit="return confirm('停用这一格？原来的人会变成待重排')">
+            <input name="note" placeholder="停用原因">
+            <button class="ghost">停用</button>
+          </form>
+          {% else %}
+          <form method="post" action="{{ url_for('schedule.reopen', slot_id=item.slot.id) }}"
+                class="inline">
+            <button>启用</button>
+          </form>
+          {% endif %}
+        </td>
+        {% endif %}
+      </tr>
+    {% else %}
+      <tr><td colspan="{{ 7 if can_manage else 6 }}" class="muted">
+        这一周还没有时间格{% if can_manage %}——点上面的"按默认规则补齐"{% endif %}
+      </td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if can_manage %}
+<div class="card">
+  <h3>加一个时间格（例如临时改到周四）</h3>
+  <form method="post" action="{{ url_for('schedule.add') }}" class="inline">
+    <label>日期<input name="slot_date" type="date" required value="{{ week }}"></label>
+    <label>开始<input name="start_time" required value="{{ default_start }}" style="width:5rem"></label>
+    <label>结束<input name="end_time" required value="{{ default_end }}" style="width:5rem"></label>
+    <label>容量（0 = 按机器数）<input name="capacity" type="number" min="0" value="0"
+      style="width:5rem"></label>
+    <label>备注<input name="note"></label>
+    <button>新增</button>
+  </form>
+</div>
+
+{% if view.unassigned %}
+<div class="card">
+  <h3>已通过但还没排格子（{{ view.unassigned|length }} 条）</h3>
+  <p class="muted">可以手工指定时间格，也可以点上面的"一键填充"把它们按顺序填进空格子。</p>
+  <table>
+    <tr><th>id</th><th>社员</th><th>活动日</th><th>序号</th><th>备注</th><th>排进</th></tr>
+    {% for r in view.unassigned %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td>{{ view.names.get(r.member_id, '#' ~ r.member_id) }}</td>
+        <td>{{ r.activity_day }}</td>
+        <td>{{ r.order_no }}</td>
+        <td>{{ r.note or '-' }}</td>
+        <td>
+          <form method="post" action="{{ url_for('schedule.assign') }}" class="inline">
+            <input type="hidden" name="reservation_id" value="{{ r.id }}">
+            <select name="slot_id">
+              {% for item in view.slots %}
+                {% if item.slot.status == 'open' %}
+                <option value="{{ item.slot.id }}">
+                  {{ item.slot.slot_date }} {{ item.weekday_label }}
+                  {{ item.slot.start_time }}–{{ item.slot.end_time }}
+                  （{{ item.assigned|length }}/{{ item.capacity }}）
+                </option>
+                {% endif %}
+              {% endfor %}
+            </select>
+            <button>排入</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

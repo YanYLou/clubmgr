@@ -276,6 +276,73 @@ def test_cli_settings_set_requires_admin(cli):
 
 
 # ---------------------------------------------------------------------------
+# 时间格排班（阶段 3.6）
+# ---------------------------------------------------------------------------
+
+def test_cli_schedule_flow(cli):
+    cli("member", "bootstrap", "--name", "社长", "--student-id", "10001")
+    cli("--operator", "10001", "member", "add", "--name", "张三", "--student-id", "10005")
+    cli("--operator", "10001", "member", "add", "--name", "运营1",
+        "--student-id", "10006", "--role", "op1")
+    for index in (1, 2, 3):
+        cli("--operator", "10001", "printer", "add", "--name", f"打印机 {index}")
+
+    # 默认格：周一 / 周三 / 周五，16:55–17:40，容量 = 可用打印机台数
+    out = cli("--operator", "10006", "schedule", "week", "--week", "2026-10-05", "--ensure")
+    assert "2026-10-05" in out and "周三" in out and "16:55-17:40" in out
+    assert "0/3" in out and "空闲打印机：3 台" in out
+
+    # 社员提交 → 运营审核 → 一键填充
+    cli("--operator", "10005", "reservation", "add", "--day", "wed", "--week", "2026-10-05")
+    cli("--operator", "10006", "reservation", "approve", "--id", "1")
+    out = cli("--operator", "10006", "schedule", "fill", "--week", "2026-10-05")
+    assert "排进 1 条" in out and "1. 张三" in out
+
+    # 取出来再手工排回去
+    out = cli("--operator", "10006", "schedule", "unassign", "--id", "1")
+    assert "（空）" in out
+    out = cli("--operator", "10006", "schedule", "assign", "--id", "1", "--slot", "2")
+    assert "已把预约 #1 排进时间格 #2" in out and "1. 张三" in out
+
+    # 停用周三那格 → 人变待重排
+    out = cli("--operator", "10006", "schedule", "close", "--id", "2", "--note", "场地被占")
+    assert "已停用时间格 #2" in out and "停用" in out
+    assert "待重排" in cli("--operator", "10006", "reservation", "reschedule")
+
+    # 启用后又可以排人（先重新通过审核）
+    cli("--operator", "10006", "schedule", "open", "--id", "2")
+    cli("--operator", "10006", "reservation", "approve", "--id", "1")
+    out = cli("--operator", "10006", "schedule", "assign", "--id", "1", "--slot", "2")
+    assert "1. 张三" in out
+
+    payload = json.loads(cli("--json", "--operator", "10006", "schedule", "week",
+                             "--week", "2026-10-05"))
+    assert payload["available_printers"] == 3
+    assert len(payload["slots"]) == 3
+    assert payload["slots"][1]["assigned"][0]["member_name"] == "张三"
+
+
+def test_cli_schedule_permission_and_validation(cli):
+    _club_for_reservations(cli)
+    cli("--operator", "10001", "printer", "add", "--name", "打印机 1")
+
+    # 普通社员只能看，不能改
+    err = cli("--operator", "10005", "schedule", "week", "--week", "2026-10-05",
+              "--ensure", expect_code=1)
+    assert "权限" in err
+
+    cli("--operator", "10001", "schedule", "week", "--week", "2026-10-05", "--ensure")
+    err = cli("--operator", "10001", "schedule", "add", "--date", "2026-10-08",
+              "--start", "16:00", "--end", "15:00", expect_code=1)
+    assert "结束时间" in err
+
+    # 加一个周四的临时格
+    out = cli("--operator", "10001", "schedule", "add", "--date", "2026-10-08",
+              "--start", "13:00", "--end", "14:00", "--note", "临时加场")
+    assert "已新增时间格" in out and "周四" in out and "临时加场" in out
+
+
+# ---------------------------------------------------------------------------
 # 自助注册（阶段 3.5）
 # ---------------------------------------------------------------------------
 

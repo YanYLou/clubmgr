@@ -310,3 +310,103 @@ def test_slot_created_at_and_staff_fields(services, club, club_ops):
     assert slot.created_by == club_ops.id
     assert slot.week_start == MONDAY
     assert services.schedule.week_view(club_ops.id, MONDAY)["slots"][0]["slot"].note == "临时加场"
+
+
+# ---------------------------------------------------------------------------
+# Web 页面
+# ---------------------------------------------------------------------------
+
+def _text(response) -> str:
+    return response.data.decode("utf-8")
+
+
+@pytest.fixture
+def web(tmp_path):
+    from interfaces.app import create_app
+
+    app = create_app(str(tmp_path / "club.db"), secret_key="test-secret")
+    services = app.config["SERVICES"]
+
+    president = services.member.bootstrap("社长", student_id="10001")
+    op1 = services.member.create_member(president.id, "运营1",
+                                       role=Role.OP1, student_id="10006")
+    member = services.member.create_member(president.id, "张三", student_id="10005")
+    for index in (1, 2):
+        services.printer.add_printer(president.id, f"打印机 {index}")
+
+    services.user.add_user(president.id, "admin", "admin123", president.id)
+    services.user.add_user(president.id, "op1user", "op1pass123", op1.id)
+    services.user.add_user(president.id, "zhangsan", "zhang123", member.id)
+    return app
+
+
+def _login(app, username, password):
+    client = app.test_client()
+    client.post("/login", data={"username": username, "password": password})
+    return client
+
+
+def test_web_schedule_page_and_actions(web):
+    services = web.config["SERVICES"]
+    op_client = _login(web, "op1user", "op1pass123")
+
+    body = _text(op_client.post("/schedule/ensure", data={"week": "2026-10-05"},
+                                follow_redirects=True))
+    assert "已按默认规则补齐 3 个时间格" in body
+    assert "周一" in body and "周三" in body and "周五" in body
+    assert "16:55–17:40" in body
+    assert "按机器数" in body                      # 容量 0 时按打印机台数
+
+    # 社员提交 → 运营审核通过 → 一键填充
+    member_client = _login(web, "zhangsan", "zhang123")
+    member_client.post("/reservations/add", data={
+        "activity_day": "wed", "week": "2026-10-05", "note": "打手办",
+    }, follow_redirects=True)
+    op_client.post("/reservations/1/approve", data={"order": "1"}, follow_redirects=True)
+
+    body = _text(op_client.post("/schedule/fill", data={"week": "2026-10-05"},
+                                follow_redirects=True))
+    assert "一键填充完成：排进 1 条" in body
+    assert "1. 张三" in body
+
+    # 社员也能看这一周的时间格
+    body = _text(member_client.get("/schedule?week=2026-10-05"))
+    assert "1. 张三" in body and "16:55–17:40" in body
+
+
+def test_web_schedule_requires_permission(web):
+    member_client = _login(web, "zhangsan", "zhang123")
+    op_client = _login(web, "op1user", "op1pass123")
+    op_client.post("/schedule/ensure", data={"week": "2026-10-05"}, follow_redirects=True)
+
+    body = _text(member_client.post("/schedule/ensure", data={"week": "2026-10-05"},
+                                    follow_redirects=True))
+    assert "没有权限" in body
+
+    # 页面里也看不到排班操作表单
+    page = _text(member_client.get("/schedule?week=2026-10-05"))
+    assert "按默认规则补齐本周时间格" not in page and "一键填充本周" not in page
+
+
+def test_web_change_slot_date_releases_people(web):
+    services = web.config["SERVICES"]
+    op_client = _login(web, "op1user", "op1pass123")
+    op_client.post("/schedule/ensure", data={"week": "2026-10-05"}, follow_redirects=True)
+
+    member_client = _login(web, "zhangsan", "zhang123")
+    member_client.post("/reservations/add", data={
+        "activity_day": "wed", "week": "2026-10-05",
+    }, follow_redirects=True)
+    op_client.post("/reservations/1/approve", data={"order": "1"}, follow_redirects=True)
+    op_client.post("/schedule/fill", data={"week": "2026-10-05"}, follow_redirects=True)
+
+    sunday_slot = services.schedule.week_view(1, date(2026, 10, 5))["slots"][1]["slot"]
+    body = _text(op_client.post(f"/schedule/{sunday_slot.id}/close",
+                                data={"note": "场地被学校占用"},
+                                follow_redirects=True))
+
+    assert "已停用 2026-10-07" in body
+    assert services.reservation._reservation(1).status == "reschedule"
+    # 本人收到通知
+    zhang = services.member.find_by_token("10005")
+    assert services.notification.list_for(zhang.id, unread_only=True)

@@ -363,6 +363,56 @@ def build_parser() -> argparse.ArgumentParser:
     p = reservation.add_parser("reschedule", help="待重排列表（需要审核权限）")
     p.set_defaults(handler=_reservation_reschedule)
 
+    # --- schedule（阶段 3.6）----------------------------------------------
+    schedule = top.add_parser("schedule", help="时间格排班（默认 16:55–17:40）").add_subparsers(
+        dest="action", required=True)
+
+    p = schedule.add_parser("week", help="本周时间格（每格排了谁、还剩几个位置）")
+    p.add_argument("--week", help="该周任意日期 YYYY-MM-DD（默认本周）")
+    p.add_argument("--ensure", action="store_true", help="先按默认规则补齐时间格")
+    p.set_defaults(handler=_schedule_week)
+
+    p = schedule.add_parser("add", help="加一个时间格")
+    p.add_argument("--date", required=True, help="真实日期 YYYY-MM-DD")
+    p.add_argument("--start", required=True, help="开始时间 HH:MM")
+    p.add_argument("--end", required=True, help="结束时间 HH:MM")
+    p.add_argument("--capacity", type=int, default=0, help="容量；0 = 按当时可用打印机台数")
+    p.add_argument("--note")
+    p.set_defaults(handler=_schedule_add)
+
+    p = schedule.add_parser("update", help="改时间 / 改日期 / 改容量")
+    p.add_argument("--id", type=int, required=True, help="时间格 id")
+    p.add_argument("--date", help="改到哪一天（会让原来的人变成待重排）")
+    p.add_argument("--start")
+    p.add_argument("--end")
+    p.add_argument("--capacity", type=int)
+    p.add_argument("--note")
+    p.set_defaults(handler=_schedule_update)
+
+    p = schedule.add_parser("close", help="停用某一格（原来的人变成待重排并收到通知）")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--note")
+    p.set_defaults(handler=_schedule_close)
+
+    p = schedule.add_parser("open", help="启用某一格")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--note")
+    p.set_defaults(handler=_schedule_open)
+
+    p = schedule.add_parser("assign", help="把已通过的预约排进某个时间格")
+    p.add_argument("--id", type=int, required=True, help="预约 id")
+    p.add_argument("--slot", type=int, required=True, help="时间格 id")
+    p.set_defaults(handler=_schedule_assign)
+
+    p = schedule.add_parser("unassign", help="把预约从时间格里拿出来")
+    p.add_argument("--id", type=int, required=True, help="预约 id")
+    p.set_defaults(handler=_schedule_unassign)
+
+    p = schedule.add_parser("fill", help="一键填充：把已通过的预约填进空格子")
+    p.add_argument("--week", help="该周任意日期 YYYY-MM-DD（默认本周）")
+    p.add_argument("--date", help="只填这一天（可选）")
+    p.set_defaults(handler=_schedule_fill)
+
     # --- printer（阶段 3.3）-----------------------------------------------
     printer = top.add_parser("printer", help="打印机（空闲 / 使用中 / 维修中）").add_subparsers(
         dest="action", required=True)
@@ -913,6 +963,148 @@ def _reservation_schedule(args, services) -> Result:
                         for day, items in schedule["days"]}}
     return Result(f"排班表 · 周 {schedule['week_start']}",
                   ["活动日", "序号", "社员", "备注"], rows, payload)
+
+
+# ---------------------------------------------------------------------------
+# 排班时间格（阶段 3.6）
+# ---------------------------------------------------------------------------
+
+def _slot_rows(services, view) -> list[list[str]]:
+    rows = []
+    for item in view["slots"]:
+        slot = item["slot"]
+        people = "；".join(
+            f"{r.order_no}. {view['names'].get(r.member_id, '#' + str(r.member_id))}"
+            + ("［紧急］" if r.urgent_reason else "")
+            for r in item["assigned"]) or "（空）"
+        rows.append([
+            str(slot.id), slot.slot_date.isoformat(), item["weekday_label"],
+            f"{slot.start_time}-{slot.end_time}",
+            f"{len(item['assigned'])}/{item['capacity']}",
+            "停用" if slot.status == "closed" else "开放",
+            people, slot.note or "-",
+        ])
+    return rows
+
+
+def _slot_payload(view) -> dict:
+    return {
+        "week_start": view["week_start"].isoformat(),
+        "available_printers": view["available_printers"],
+        "slots": [{
+            "id": item["slot"].id,
+            "slot_date": item["slot"].slot_date.isoformat(),
+            "weekday": item["weekday_label"],
+            "start_time": item["slot"].start_time,
+            "end_time": item["slot"].end_time,
+            "capacity": item["capacity"],
+            "capacity_setting": item["slot"].capacity,
+            "status": item["slot"].status,
+            "assigned": [{"reservation_id": r.id, "member_id": r.member_id,
+                          "member_name": view["names"].get(r.member_id),
+                          "order_no": r.order_no,
+                          "urgent_reason": r.urgent_reason}
+                         for r in item["assigned"]],
+        } for item in view["slots"]],
+        "unassigned": [{"reservation_id": r.id, "member_id": r.member_id,
+                        "member_name": view["names"].get(r.member_id),
+                        "activity_day": r.activity_day, "order_no": r.order_no}
+                       for r in view["unassigned"]],
+    }
+
+
+def _schedule_week(args, services) -> Result:
+    operator = _operator(args, services)
+    week = _date(args.week)
+    if args.ensure:
+        services.schedule.ensure_week(operator.id, week)
+    view = services.schedule.week_view(operator.id, week)
+    extra = ["", f"当时空闲打印机：{view['available_printers']} 台"
+                 f"（容量 0 的格子按这个数算）",
+             f"已通过但还没排格子：{len(view['unassigned'])} 条"]
+    return Result(
+        f"时间格排班 · 周 {view['week_start']}",
+        ["格id", "日期", "星期", "时间", "位置", "状态", "已排的人", "备注"],
+        _slot_rows(services, view), _slot_payload(view), extra)
+
+
+def _schedule_add(args, services) -> Result:
+    operator = _operator(args, services)
+    slot = services.schedule.add_slot(
+        operator.id, slot_date=_date(args.date), start_time=args.start,
+        end_time=args.end, capacity=args.capacity, note=args.note)
+    view = services.schedule.week_view(operator.id, slot.week_start)
+    return Result(f"已新增时间格 #{slot.id}：{slot.slot_date} "
+                  f"{slot.start_time}-{slot.end_time}",
+                  ["格id", "日期", "星期", "时间", "位置", "状态", "已排的人", "备注"],
+                  _slot_rows(services, view), _slot_payload(view))
+
+
+def _schedule_update(args, services) -> Result:
+    operator = _operator(args, services)
+    slot = services.schedule.update_slot(
+        operator.id, args.id, slot_date=_date(args.date), start_time=args.start,
+        end_time=args.end, capacity=args.capacity, note=args.note)
+    view = services.schedule.week_view(operator.id, slot.week_start)
+    return Result(f"已更新时间格 #{slot.id}：{slot.slot_date} "
+                  f"{slot.start_time}-{slot.end_time}",
+                  ["格id", "日期", "星期", "时间", "位置", "状态", "已排的人", "备注"],
+                  _slot_rows(services, view), _slot_payload(view))
+
+
+def _schedule_close(args, services) -> Result:
+    operator = _operator(args, services)
+    slot = services.schedule.close_slot(operator.id, args.id, note=args.note)
+    view = services.schedule.week_view(operator.id, slot.week_start)
+    return Result(f"已停用时间格 #{slot.id}（{slot.slot_date} {slot.start_time}）",
+                  ["格id", "日期", "星期", "时间", "位置", "状态", "已排的人", "备注"],
+                  _slot_rows(services, view), _slot_payload(view))
+
+
+def _schedule_open(args, services) -> Result:
+    operator = _operator(args, services)
+    slot = services.schedule.reopen_slot(operator.id, args.id, note=args.note)
+    view = services.schedule.week_view(operator.id, slot.week_start)
+    return Result(f"已启用时间格 #{slot.id}（{slot.slot_date} {slot.start_time}）",
+                  ["格id", "日期", "星期", "时间", "位置", "状态", "已排的人", "备注"],
+                  _slot_rows(services, view), _slot_payload(view))
+
+
+def _schedule_assign(args, services) -> Result:
+    operator = _operator(args, services)
+    reservation = services.schedule.assign(operator.id, args.id, args.slot)
+    view = services.schedule.week_view(operator.id, reservation.week_start)
+    return Result(f"已把预约 #{reservation.id} 排进时间格 #{args.slot}",
+                  ["格id", "日期", "星期", "时间", "位置", "状态", "已排的人", "备注"],
+                  _slot_rows(services, view), _slot_payload(view))
+
+
+def _schedule_unassign(args, services) -> Result:
+    operator = _operator(args, services)
+    reservation = services.schedule.unassign(operator.id, args.id)
+    view = services.schedule.week_view(operator.id, reservation.week_start)
+    return Result(f"已把预约 #{reservation.id} 从时间格里拿出来",
+                  ["格id", "日期", "星期", "时间", "位置", "状态", "已排的人", "备注"],
+                  _slot_rows(services, view), _slot_payload(view))
+
+
+def _schedule_fill(args, services) -> Result:
+    operator = _operator(args, services)
+    result = services.schedule.auto_fill(operator.id, _date(args.week),
+                                         slot_date=_date(args.date))
+    view = services.schedule.week_view(operator.id, result["week_start"])
+    if result.get("reason"):
+        return Result(f"没有填充：{result['reason']}",
+                      ["格id", "日期", "星期", "时间", "位置", "状态", "已排的人", "备注"],
+                      _slot_rows(services, view), _slot_payload(view))
+    skipped = "，".join(
+        f"#{r.id}（{view['names'].get(r.member_id, r.member_id)}）"
+        for r in result["skipped"])
+    extra = ["", f"排进 {len(result['assigned'])} 条"
+                 + (f"；没位置（容量不够）：{skipped}" if skipped else "")]
+    return Result(f"一键填充完成 · 周 {result['week_start']}",
+                  ["格id", "日期", "星期", "时间", "位置", "状态", "已排的人", "备注"],
+                  _slot_rows(services, view), _slot_payload(view), extra)
 
 
 # ---------------------------------------------------------------------------

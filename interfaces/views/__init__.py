@@ -11,6 +11,7 @@ from interfaces.views.printers import bp as printers_bp
 from interfaces.views.quota import bp as quota_bp
 from interfaces.views.records import bp as records_bp
 from interfaces.views.reservations import bp as reservations_bp
+from interfaces.views.schedule import bp as schedule_bp
 from interfaces.views.users import bp as users_bp
 
 BLUEPRINTS = (
@@ -26,6 +27,7 @@ BLUEPRINTS = (
     reservations_bp,
     notifications_bp,
     printers_bp,
+    schedule_bp,
 )
 
 
