@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}预约{% endblock %}
+{% block body %}
+<div class="card">
+  <h2>排班表 · 周 {{ schedule.week_start }}</h2>
+  <p>
+    <a href="{{ url_for('reservations.index', week=prev_week) }}">← 上一周</a> ·
+    <a href="{{ url_for('reservations.index') }}">本周</a> ·
+    <a href="{{ url_for('reservations.index', week=next_week) }}">下一周 →</a>
+  </p>
+  <table>
+    <tr><th>活动日</th><th>序号</th><th>社员</th><th>备注</th></tr>
+    {% for day, items in schedule.days %}
+      {% for item in items %}
+        <tr>
+          <td>{{ day_labels[day] }}</td>
+          <td>{{ item.order_no }}</td>
+          <td>{{ schedule.names.get(item.member_id, '#' ~ item.member_id) }}</td>
+          <td>{{ item.note or '-' }}</td>
+        </tr>
+      {% else %}
+        <tr><td>{{ day_labels[day] }}</td><td colspan="3" class="muted">还没有排班</td></tr>
+      {% endfor %}
+    {% endfor %}
+  </table>
+  <p class="muted">只有审核通过的预约才会出现在这里。</p>
+</div>
+
+<div class="card">
+  <h3>提交预约</h3>
+  <p class="muted">谁都能提交，提交后等社长 / 副社长 / 运维审核；审核通过才进排班表。</p>
+  <form method="post" action="{{ url_for('reservations.add') }}" class="inline">
+    <label>活动日
+      <select name="activity_day">
+        {% for day in days %}<option value="{{ day }}">{{ day_labels[day] }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>哪一周（填该周任意一天，默认本周）<input name="week" placeholder="2026-10-07"></label>
+    {% if can('schedule') %}
+      <label>替谁提交（学号 / 姓名 / id，留空=自己）<input name="member"></label>
+    {% endif %}
+    <label>备注<input name="note" placeholder="想打的模型 / 需求"></label>
+    <button>提交</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>我的预约</h3>
+  <table>
+    <tr><th>id</th><th>周</th><th>活动日</th><th>序号</th><th>状态</th><th>备注</th><th>操作</th></tr>
+    {% for item in mine %}
+      <tr>
+        <td>{{ item.id }}</td>
+        <td>{{ item.week_start }}</td>
+        <td>{{ day_labels.get(item.activity_day, item.activity_day) }}</td>
+        <td>{{ item.order_no or '-' }}</td>
+        <td>{{ item.status }}</td>
+        <td>{{ item.note or '-' }}</td>
+        <td>
+          {% if item.status in ('pending', 'approved') %}
+            <form method="post" action="{{ url_for('reservations.cancel', reservation_id=item.id) }}"
+                  class="inline" onsubmit="return confirm('确认撤销这条预约？')">
+              <button class="ghost">撤销</button>
+            </form>
+          {% else %}-{% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">还没有提交过预约</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if can('review_reservation') %}
+<div class="card">
+  <h3>待审核（{{ pending|length }} 条）</h3>
+  <table>
+    <tr><th>id</th><th>社员</th><th>周</th><th>活动日</th><th>备注</th><th>通过 / 驳回</th></tr>
+    {% for item in pending %}
+      <tr>
+        <td>{{ item.id }}</td>
+        <td>{{ names.get(item.member_id, '#' ~ item.member_id) }}</td>
+        <td>{{ item.week_start }}</td>
+        <td>{{ day_labels.get(item.activity_day, item.activity_day) }}</td>
+        <td>{{ item.note or '-' }}</td>
+        <td>
+          <form method="post" action="{{ url_for('reservations.approve', reservation_id=item.id) }}"
+                class="inline">
+            <input name="order" type="number" min="1" placeholder="序号" style="width:5rem">
+            <button>通过</button>
+          </form>
+          <form method="post" action="{{ url_for('reservations.reject', reservation_id=item.id) }}"
+                class="inline">
+            <input name="note" placeholder="驳回原因">
+            <button class="ghost">驳回</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">没有待审核的预约</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

@@ -202,3 +202,114 @@ def test_mine_can_be_read_by_reviewer_only(services, club):
                                          member_id=club.member.id)) == 1
     with pytest.raises(PermissionError):
         services.reservation.mine(club.hr.id, member_id=club.member.id)
+
+
+# ---------------------------------------------------------------------------
+# Web 页面
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def web(tmp_path):
+    from interfaces.app import create_app
+
+    app = create_app(str(tmp_path / "club.db"), secret_key="test-secret")
+    services = app.config["SERVICES"]
+
+    president = services.member.bootstrap("社长", student_id="10001")
+    op2 = services.member.create_member(president.id, "运营2",
+                                        role=Role.OP2, student_id="10002")
+    member = services.member.create_member(president.id, "张三", student_id="10005")
+    services.user.add_user(president.id, "admin", "admin123", president.id)
+    services.user.add_user(president.id, "op2user", "op2pass123", op2.id)
+    services.user.add_user(president.id, "zhangsan", "zhang123", member.id)
+    return app
+
+
+def _login(app, username: str, password: str):
+    client = app.test_client()
+    client.post("/login", data={"username": username, "password": password})
+    return client
+
+
+def _text(response) -> str:
+    return response.data.decode("utf-8")
+
+
+def test_web_submit_then_review(web):
+    member_client = _login(web, "zhangsan", "zhang123")
+
+    body = _text(member_client.post("/reservations/add", data={
+        "activity_day": "wed", "week": "2026-10-07", "note": "打手办",
+    }, follow_redirects=True))
+    assert "已提交预约" in body
+    assert "还没有排班" in body                     # 未审核 → 不进排班表
+    assert "待审核（" not in body                   # 普通社员看不到审核队列
+
+    reviewer_client = _login(web, "op2user", "op2pass123")
+    body = _text(reviewer_client.get("/reservations"))
+    assert "张三" in body and "待审核（1 条）" in body
+
+    body = _text(reviewer_client.post("/reservations/1/approve", data={},
+                                      follow_redirects=True))
+    assert "已通过预约 #1，排班序号 1" in body
+
+    # 排班表里现在有张三（周一 / 周五仍是空的，周三排上了）
+    body = _text(member_client.get("/reservations?week=2026-10-05"))
+    assert "张三" in body
+    assert body.count("还没有排班") == 2
+
+
+def test_web_review_requires_permission(web):
+    _login(web, "zhangsan", "zhang123").post("/reservations/add", data={
+        "activity_day": "mon", "week": "2026-10-05",
+    }, follow_redirects=True)
+
+    member_client = _login(web, "zhangsan", "zhang123")
+    body = _text(member_client.post("/reservations/1/approve", data={},
+                                    follow_redirects=True))
+    assert "没有权限" in body
+
+
+def test_web_reject_and_cancel(web):
+    member_client = _login(web, "zhangsan", "zhang123")
+    member_client.post("/reservations/add", data={
+        "activity_day": "mon", "week": "2026-10-05", "note": "打模型",
+    }, follow_redirects=True)
+
+    reviewer_client = _login(web, "op2user", "op2pass123")
+    body = _text(reviewer_client.post("/reservations/1/reject",
+                                      data={"note": "当天名额满了"},
+                                      follow_redirects=True))
+    assert "已驳回预约 #1" in body
+
+    body = _text(member_client.get("/reservations"))
+    assert "rejected" in body and "当天名额满了" in body
+
+    # 被驳回之后可以重新提交，并且本人可以撤销
+    member_client.post("/reservations/add", data={
+        "activity_day": "mon", "week": "2026-10-05",
+    }, follow_redirects=True)
+    body = _text(member_client.post("/reservations/2/cancel", data={},
+                                    follow_redirects=True))
+    assert "已撤销预约 #2" in body and "cancelled" in body
+
+
+def test_web_staff_can_submit_for_others(web):
+    services = web.config["SERVICES"]
+    op1 = services.member.create_member(
+        services.member.find_by_token("10001").id, "运营1",
+        role=Role.OP1, student_id="10007")
+    services.user.add_user(services.member.find_by_token("10001").id,
+                           "op1user", "op1pass123", op1.id)
+
+    client = _login(web, "op1user", "op1pass123")
+    body = _text(client.post("/reservations/add", data={
+        "activity_day": "fri", "week": "2026-10-05",
+        "member": "10005", "note": "代录（群里报的名）",
+    }, follow_redirects=True))
+
+    assert "已提交预约" in body
+    reservation = services.reservation.mine(op1.id)      # 提交人是运营1
+    assert reservation == []
+    assert services.reservation.mine(op1.id, member_id=services.member.find_by_token("10005").id)
+

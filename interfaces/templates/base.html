@@ -45,6 +45,7 @@
   {% if g.member %}
   <nav>
     <a href="{{ url_for('dashboard.index') }}">首页</a>
+    <a href="{{ url_for('reservations.index') }}">预约</a>
     <a href="{{ url_for('dashboard.statement') }}">我的额度单</a>
     {% if can('view_members') %}<a href="{{ url_for('members.index') }}">社员</a>{% endif %}
     <a href="{{ url_for('records.index') }}">{% if can('view_records') %}打印记录{% else %}我的打印{% endif %}</a>
