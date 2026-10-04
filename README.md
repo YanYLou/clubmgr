@@ -21,9 +21,10 @@
 | 权限矩阵 `domain/permissions.py` | ✅ | 11 个动作，含"额度不足只有社长/副社长能记" |
 | 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印（三表同事务）/ 耗材 / 经费 / 贡献 / 报表 |
 | 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 |
-| Web 界面 `interfaces/app.py` | ❌ | 仍是 Hello World（阶段 2.2） |
-| 装配 `main.py` | ✅ | `build_repositories` / `build_services` / `open_services` + CLI 入口 |
-| 测试 | ✅ | 59 个用例：数据层、仓储、权限、服务、CLI |
+| Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 社员 / 打印 / 耗材 / 额度 / 经费 / 账号页面 |
+| 登录与账号（`users` 表） | ✅ | pbkdf2 口令哈希 + 会话登录；账号权限仍取自关联社员的角色 |
+| 装配 `main.py` | ✅ | `build_repositories` / `build_services` / `open_services` + CLI / Web 入口 |
+| 测试 | ✅ | 83 个用例：数据层、仓储、权限、服务、CLI、Web |
 | 预约排期 `reservations` | ❌ | 表已建好，仓储与服务未写（等"一人一天能约几件"定下来） |
 
 一句话：**额度、打印、库存、经费的闭环已经能用命令行完整操作；Web 界面与预约排期还没做。**
@@ -44,7 +45,32 @@ python -m pytest -q
 
 # 3. 初始化数据库并创建第一个社长（首次运行会自动创建 data/club.db）
 python main.py member bootstrap --name 社长 --student-id 10001
+
+# 4. 建一个登录账号（Web 界面需要；本地测试账号就用 admin / admin123）
+python main.py --operator 10001 user add --username admin --password admin123 --member 10001
+
+# 5. 启动 Web 界面，浏览器打开 http://127.0.0.1:5000/ 用上面的账号登录
+python main.py web
 ```
+
+## Web 界面
+
+```powershell
+python main.py web                      # 默认 127.0.0.1:5000
+python main.py web --host 0.0.0.0 --port 8080   # 让同社团的人在内网访问
+flask --app interfaces.app:create_app run --debug   # 等价写法（开发模式）
+```
+
+页面：首页概览（自己的额度 + 社长视角的全社额度 / 库存 / 经费）、我的额度单、
+社员名册与增改退社、打印记录与「记打印」、耗材与库存、额度发放与调整、经费流水与贡献、账号管理。
+
+要点：
+
+- **必须先建账号**：`user add`（见上面第 4 步）或让社长在「账号」页面创建；
+  账号只是"证明你是哪个社员"，权限仍然取自该社员的角色。
+- 会话密钥优先读环境变量 `CLUBMGR_SECRET_KEY`，没有就在 `data/secret_key` 里生成一个并复用。
+- 服务是 Flask 开发服务器，只适合社团内网 / 本机使用；页面写入全部走服务层，
+  权限、事务、额度规则与 CLI 完全一致。
 
 ## 命令行用法
 
@@ -94,15 +120,18 @@ clubmgr/
 │   ├─ models.py               # dataclass 与枚举
 │   ├─ repositories.py         # 仓储抽象接口 + 事务边界（端口）
 │   ├─ permissions.py          # 角色权限矩阵
+│   ├─ security.py             # 口令哈希（pbkdf2）
 │   └─ services.py             # 业务逻辑与事务边界
 ├─ infrastructure/             # 基础设施层
 │   ├─ db.py                   # 连接、PRAGMA、建表、可嵌套事务、结构版本
-│   ├─ repositories.py         # 泛型 SQLite 仓储 + 7 个具体仓储 + 类型还原
+│   ├─ repositories.py         # 泛型 SQLite 仓储 + 8 个具体仓储 + 类型还原
 │   └─ schema.sql              # 建表语句与索引
 ├─ interfaces/                 # 接口层
-│   ├─ cli.py                  # 命令行（阶段 2.1）
-│   └─ app.py                  # Flask 骨架（待做）
-├─ tests/                      # pytest 测试（59 个用例）
+│   ├─ cli.py                  # 命令行
+│   ├─ app.py                  # Flask 应用工厂
+│   ├─ views/                  # 8 个蓝图（auth/dashboard/members/records/filaments/quota/fund/users）
+│   └─ templates/              # Jinja 模板
+├─ tests/                      # pytest 测试（83 个用例）
 └─ docs/                       # 设计文档与路线图
 ```
 
@@ -116,7 +145,11 @@ clubmgr/
 | `hr` | 成员增改、退社 |
 | `member` | 只看自己的额度与记录 |
 
-权限判断放在服务层（`domain/permissions.py` + `domain/services.py`），接口层不重复判断。
+权限判断放在服务层（`domain/permissions.py` + `domain/services.py`），接口层不重复判断
+（Web 页面只用 `can()` 隐藏入口，CLI 完全不判断）。除了上表的职责，还有几个细分的读权限：
+`view_members`（人事看名册）、`view_records`（运营2 看打印记录做统计）、
+`view_inventory`（运营2 选耗材）、`view_funds`（经费只给社长 / 副社长）、
+`manage_users`（登录账号管理）。
 
 ## 数据模型（8 张表）
 
@@ -143,6 +176,8 @@ clubmgr/
 - **类型还原**：写库用 `date` / `Role`，读回时由 `SQLite3Repository._from_row` 按字段类型注解还原。
 - **结构版本**：改 `schema.sql` 必须同时把 `infrastructure/db.py` 的 `SCHEMA_VERSION` 加 1；
   打开旧版本的库会直接报错并提示重建（开发阶段没有迁移脚本）。
+- **账号与权限分离**：`users` 表只回答"你是哪个社员"，所有权限都按该社员的 `role` 判断；
+  口令用 pbkdf2 + 每人随机盐存储（`domain/security.py`），会话里只放账号 id。
 
 ## 文档
 

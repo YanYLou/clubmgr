@@ -18,6 +18,8 @@
 | 耗材关联 | `records` 增加 **`filament_id` 外键**，`filament_name` 保留为历史快照 | 同上 |
 | `consumption` 单位 | 按**克**处理（字段注释与文档统一写"克"） | `Record.consumption` |
 | 打印失败 / 废件 | 暂不记录（没有对应字段），只记成功件 | — |
+| Web 端如何确定操作人 | **做用户表 + 登录界面**：账号关联社员，权限仍取自社员角色；本地测试账号 `admin / admin123` | `users` 表、`UserService`、`interfaces/views/auth.py` |
+| 预约规则 | 你的原话是"按打印个数状态预约"，含义待确认（见文末第 1 条） | 阶段 2.3 |
 
 仍未定的问题见文末。
 
@@ -65,19 +67,23 @@
 | # | 任务 | 标记 | 提交 |
 | --- | --- | --- | --- |
 | 2.1 | **CLI**：`python main.py ...`，覆盖全部业务动作，`--json` 可脚本化 | ✅ `interfaces/cli.py` | `11523bc` |
-| 2.2 | **Web**：Flask 应用工厂 `create_app()` + 蓝图 + 模板 | ❌ | — |
-| 2.3 | `reservations` 预约排期（仓储 + 服务 + CLI 子命令） | ❌ | — |
+| 2.2a | **登录账号**：`users` 表 + pbkdf2 口令哈希 + `UserService`（结构版本 3） | ✅ `domain/security.py` · ✅ `interfaces/…` | `b5bc63c` |
+| 2.2b | **Web 界面**：应用工厂 + 8 个蓝图 + 11 个模板 + `main.py web` | ✅ `interfaces/app.py` · ✅ `interfaces/views/` · ✅ `interfaces/templates/` | `09b5056` |
+| 2.3 | `reservations` 预约排期（仓储 + 服务 + CLI 子命令 + 页面） | ❌ | — |
 | 2.4 | 备份脚本（`Connection.backup()` 热备份，按日期保留） | ❌ | — |
 
-Web 注意事项：`.flaskenv` 里的 `FLASK_APP=app` 只在 `interfaces/` 目录下成立，
-且需要 `python-dotenv`（已写进 `requirements.txt`，开发机尚未安装）；
-建议改用 `flask --app interfaces.app:create_app run`。
+Web 端要点：账号只是"证明你是哪个社员"，权限仍取自该社员的角色；会话里只放 `user_id`，
+每个请求重新取角色；SQLite 单连接跨线程 + 一把请求锁串行化；会话密钥取
+`CLUBMGR_SECRET_KEY`，否则生成 `data/secret_key` 复用。
 
 ## 待决策的业务问题
 
-1. **一个人一天能约几件**？决定 `reservations` 的唯一约束（阶段 2.3 开工前需要）。
+1. **预约规则到底怎么算**？你的回复是"按打印个数状态预约"，需要确认它的准确含义，例如是不是
+   "一次预约 = 一件打印（按**件数**占名额），并且有 `pending → printed / cancelled` 的状态流转"。
+   这决定 `reservations` 的唯一约束（`(week_start, activity_day, order_no)` 还是
+   `(week_start, activity_day, member_id)`，或者要加 `count` 字段）与页面长什么样。
 2. 经费与库存要不要**月度快照表**？目前一律实时 `SUM`，数据量小够用。
-3. 是否需要**真正的登录**？现在只在本机用，服务层校验 `operator_id` 的角色即可；
-   要让社员自己上网页查额度就必须做身份认证。
+3. 社员自助查额度已经能用 Web 登录实现（`member` 角色只能看自己）；
+   是否还需要"不登录也能查自己额度"的匿名入口？
 4. **耗材停用的边界**：删除还是加 `status` 字段（社员退社已定为只改 `status`）。
 5. 打印**失败 / 废件**要不要记（若要记，需要加字段并定"是否扣额度"）。
