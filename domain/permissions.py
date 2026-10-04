@@ -57,6 +57,7 @@ MATRIX: dict[str, frozenset[Role]] = {
     "purchase":        FULL,                      # 耗材入库 / 采购 / 新建耗材
     "manage_funds":    FULL,                      # 经费收支与贡献奖励
     "manage_users":    ADMINS,                    # 登录账号管理 + Web 维护页
+    "manage_settings": ADMINS,                    # 全局配置（低库存阈值等，阶段 3.2）
     "view_own":        EVERYONE,                  # 查看自己的额度与记录
     # 读权限：不同角色要干的活不同
     "view_members":    FULL | {Role.HR},          # 社员名册

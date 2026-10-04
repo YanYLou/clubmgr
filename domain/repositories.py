@@ -105,3 +105,16 @@ class ContributionRepository(Repository[Contribution]):
     def list_by_member(self, member_id: int) -> list[Contribution]: ...
     @abstractmethod
     def list_by_date_range(self, start: date, end: date) -> list[Contribution]: ...  # 阶段 2.5 新增
+
+class SettingRepository(Repository[Setting]):                        # 阶段 3.2 新增
+    @abstractmethod
+    def find_by_key(self, key: str) -> Setting | None: ...
+
+class NotificationRepository(Repository[Notification]):              # 阶段 3.2 新增
+    @abstractmethod
+    def list_by_member(self, member_id: int, *,
+                       unread_only: bool = False) -> list[Notification]: ...
+    @abstractmethod
+    def count_unread(self, member_id: int) -> int: ...
+    @abstractmethod
+    def find_unread_by_ref(self, ref: str) -> Notification | None: ...

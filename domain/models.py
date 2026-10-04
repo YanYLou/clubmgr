@@ -20,6 +20,9 @@
 阶段 3.1 变更（按选择题确认的答案）：``Role`` 拆出副社长1号 / 2号，新增 ``teacher``
 （社团老师，权限与社长同级），两位运营权限完全一致。旧值 ``vice_president`` 由
 :meth:`Role.parse` 兼容为副社长1号（`members.role` 是 TEXT，无需改表结构）。
+
+阶段 3.2 变更：新增 ``Setting``（全局配置，放低库存阈值）与 ``Notification``（站内通知）。
+结构版本升到 5。
 """
 
 import datetime
@@ -153,3 +156,25 @@ class Contribution:
     date: datetime.date = field(default_factory=date.today)
     operator_id: int = 0
     note: Optional[str] = None
+
+@dataclass
+class Setting:
+    """全局配置项（阶段 3.2 新增）：键值对，目前放低库存阈值。"""
+
+    id: Optional[int] = None
+    key: str = ""
+    value: str = ""
+    note: Optional[str] = None
+
+@dataclass
+class Notification:
+    """站内通知（阶段 3.2 新增）：``member_id`` 是收件人。"""
+
+    id: Optional[int] = None
+    member_id: int = 0
+    type: str = ""                    # low_stock / reservation_bumped ...
+    title: str = ""
+    body: Optional[str] = None
+    ref: Optional[str] = None         # 关联对象，例如 "filament:1"
+    created_at: Optional[datetime.datetime] = None
+    read_at: Optional[datetime.datetime] = None

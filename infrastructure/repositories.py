@@ -29,10 +29,12 @@ from domain.models import (
     FundTransaction,
     InventoryTransaction,
     Member,
+    Notification,
     QuotaTransaction,
     Record,
     Reservation,
     Role,
+    Setting,
     User,
 )
 from domain.repositories import (
@@ -41,10 +43,12 @@ from domain.repositories import (
     FundTransactionRepository,
     InventoryTransactionRepository,
     MemberRepository,
+    NotificationRepository,
     QuotaTransactionRepository,
     RecordRepository,
     Repository,
     ReservationRepository,
+    SettingRepository,
     UserRepository,
 )
 from infrastructure.db import Database
@@ -450,4 +454,51 @@ class SQLiteReservationRepo(SQLite3Repository[Reservation], ReservationRepositor
             "WHERE week_start = ? AND activity_day = ? AND member_id = ? "
             "AND status = 'pending' LIMIT 1",
             (week_start.isoformat(), activity_day, member_id),
+        )
+
+
+class SQLiteSettingRepo(SQLite3Repository[Setting], SettingRepository):
+    """全局配置（阶段 3.2 新增）：键值对。"""
+
+    table = "settings"
+    entity_cls = Setting
+
+    def find_by_key(self, key: str) -> Setting | None:
+        return self._first(key=key)
+
+    def set_value(self, key: str, value: str, *, note: str | None = None) -> Setting:
+        """写入配置（有就改、没有就建）。"""
+        existing = self.find_by_key(key)
+        if existing is None:
+            return self._create(Setting(key=key, value=str(value), note=note))
+
+        updated = replace(existing, value=str(value),
+                          note=note if note is not None else existing.note)
+        self._update(updated)
+        return updated
+
+
+class SQLiteNotificationRepo(SQLite3Repository[Notification], NotificationRepository):
+    """站内通知（阶段 3.2 新增）。"""
+
+    table = "notifications"
+    entity_cls = Notification
+
+    def list_by_member(self, member_id: int, *,
+                       unread_only: bool = False) -> list[Notification]:
+        sql = (f"SELECT {self._columns} FROM notifications WHERE member_id = ?"
+               + (" AND read_at IS NULL" if unread_only else "")
+               + " ORDER BY id DESC")
+        return self._query(sql, (member_id,))
+
+    def count_unread(self, member_id: int) -> int:
+        return int(self._scalar(
+            "SELECT COUNT(*) FROM notifications WHERE member_id = ? AND read_at IS NULL",
+            (member_id,)))
+
+    def find_unread_by_ref(self, ref: str) -> Notification | None:
+        return self._query_one(
+            f"SELECT {self._columns} FROM notifications "
+            "WHERE ref = ? AND read_at IS NULL ORDER BY id DESC LIMIT 1",
+            (ref,),
         )

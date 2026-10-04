@@ -1,6 +1,6 @@
 
 -- 建表脚本，只在空库上执行（见 infrastructure/db.py 的 _init_schema）。
--- 结构版本：4 —— 与 db.py 的 SCHEMA_VERSION 保持一致；改动本文件必须同步 +1。
+-- 结构版本：5 —— 与 db.py 的 SCHEMA_VERSION 保持一致；改动本文件必须同步 +1。
 
 CREATE TABLE members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,6 +123,28 @@ CREATE INDEX ix_quota_member         ON quota_transactions(member_id);
 CREATE INDEX ix_inventory_filament   ON inventory_transactions(filament_id);
 CREATE INDEX ix_fund_date            ON fund_transactions(date);
 CREATE INDEX ix_contributions_member ON contributions(member_id);
+
+-- 全局配置（阶段 3.2 新增）：键值对，目前放 low_stock_threshold（低库存阈值，单位克）
+CREATE TABLE settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,
+    value TEXT NOT NULL,
+    note TEXT
+);
+
+-- 站内通知（阶段 3.2 新增）：member_id = 收件人；ref 指向关联对象，例如 "filament:1"
+CREATE TABLE notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT,
+    ref TEXT,
+    created_at TEXT NOT NULL,
+    read_at TEXT,
+    FOREIGN KEY (member_id) REFERENCES members(id)
+);
+CREATE INDEX ix_notifications_member ON notifications(member_id, read_at);
 
 -- 预约（阶段 2.3 新增）：提交不设限，只有「已通过」才进排班表；
 -- 部分唯一索引保证同一天同一人最多一条已通过的排班（待审核 / 被驳回的不受限制）

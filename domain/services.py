@@ -28,10 +28,12 @@ from domain.models import (
     FundTransaction,
     InventoryTransaction,
     Member,
+    Notification,
     QuotaTransaction,
     Record,
     Reservation,
     Role,
+    Setting,
     User,
 )
 from domain.permissions import can, can_view_member, require
@@ -41,9 +43,11 @@ from domain.repositories import (
     FundTransactionRepository,
     InventoryTransactionRepository,
     MemberRepository,
+    NotificationRepository,
     QuotaTransactionRepository,
     RecordRepository,
     ReservationRepository,
+    SettingRepository,
     TransactionManager,
     UserRepository,
 )
@@ -54,6 +58,8 @@ CONTRIBUTION_TYPES = ("money", "material")
 ACTIVITY_DAYS = ("mon", "wed", "fri")
 DAY_LABELS = {"mon": "周一", "wed": "周三", "fri": "周五"}
 RESERVATION_STATUSES = ("pending", "approved", "rejected", "cancelled")
+SETTING_LOW_STOCK = "low_stock_threshold"          # 全局配置键（阶段 3.2）
+DEFAULT_LOW_STOCK_THRESHOLD = 100.0                # 默认低库存阈值（克）
 _EDITABLE_MEMBER_FIELDS = frozenset(
     {"name", "qq", "student_id", "role", "status", "join_date", "note"}
 )
@@ -288,12 +294,14 @@ class RecordService(_Service):
     def __init__(self, db: TransactionManager, member_repo: MemberRepository,
                  record_repo: RecordRepository, quota_repo: QuotaTransactionRepository,
                  filament_repo: FilamentRepository,
-                 inventory_repo: InventoryTransactionRepository) -> None:
+                 inventory_repo: InventoryTransactionRepository,
+                 alerts: "StockAlertService | None" = None) -> None:
         super().__init__(db, member_repo)
         self.record_repo = record_repo
         self.quota_repo = quota_repo
         self.filament_repo = filament_repo
         self.inventory_repo = inventory_repo
+        self.alerts = alerts          # 阶段 3.2：出库后检查是否跨过低库存阈值
 
     def record_print(self, operator_id: int, member_id: int, filament_id: int,
                      consumption: float, *, printer_name: str = "",
@@ -312,6 +320,7 @@ class RecordService(_Service):
 
         with self.db.transaction():
             balance = self.quota_repo.balance_of(member.id)
+            stock_before = self.inventory_repo.stock_of(filament.id)
             if balance - consumption < 0 and not can(operator.role, "allow_overdraft"):
                 raise PermissionError(
                     f"{member.name} 剩余额度 {balance:g} 克，本次消耗 {consumption:g} 克；"
@@ -330,6 +339,9 @@ class RecordService(_Service):
                 filament_id=filament.id, amount=-consumption, type="print",
                 related_record_id=record.id, operator_id=operator.id, date=day,
                 note=f"打印记录 #{record.id}"))
+            if self.alerts is not None:
+                # 跨过低库存阈值就给两位运营发通知（与打印同事务，失败一起回滚）
+                self.alerts.after_outbound(filament.id, stock_before)
         return record
 
     def list_records(self, operator_id: int, *, member_id: int | None = None,
@@ -488,6 +500,166 @@ class ContributionService(_Service):
 # ---------------------------------------------------------------------------
 # 只读查询与报表
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 全局配置、站内通知与余量告警（阶段 3.2）
+# ---------------------------------------------------------------------------
+
+class SettingsService(_Service):
+    """全局配置（键值对）。目前只有低库存阈值一个键。"""
+
+    def __init__(self, db: TransactionManager, member_repo: MemberRepository,
+                 setting_repo: SettingRepository) -> None:
+        super().__init__(db, member_repo)
+        self.setting_repo = setting_repo
+
+    def get(self, key: str, default: str | None = None) -> str | None:
+        """读配置（服务内部与只读展示用，不做权限校验）。"""
+        setting = self.setting_repo.find_by_key(key)
+        return setting.value if setting is not None else default
+
+    def get_number(self, key: str, default: float) -> float:
+        raw = self.get(key)
+        try:
+            return float(raw) if raw is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    def set(self, operator_id: int, key: str, value, *,
+            note: str | None = None) -> Setting:
+        """写配置（需要 ``manage_settings``）。"""
+        self._operator(operator_id, "manage_settings")
+        key = (key or "").strip()
+        if not key:
+            raise ValueError("配置名不能为空")
+        with self.db.transaction():
+            return self.setting_repo.set_value(key, str(value), note=note)
+
+    def all(self, operator_id: int) -> list[Setting]:
+        self._operator(operator_id, "manage_settings")
+        return self.setting_repo._list()
+
+    def low_stock_threshold(self) -> float:
+        """低库存阈值（克）；0 或负数表示关闭告警。"""
+        return self.get_number(SETTING_LOW_STOCK, DEFAULT_LOW_STOCK_THRESHOLD)
+
+
+class NotificationService(_Service):
+    """站内通知：谁收到、读了没有。"""
+
+    def __init__(self, db: TransactionManager, member_repo: MemberRepository,
+                 notification_repo: NotificationRepository) -> None:
+        super().__init__(db, member_repo)
+        self.notification_repo = notification_repo
+
+    def send(self, member_ids, *, type: str, title: str, body: str | None = None,
+             ref: str | None = None) -> list[Notification]:
+        """给指定社员发通知（服务内部调用，不做权限校验）。"""
+        targets = sorted({int(member_id) for member_id in member_ids})
+        if not targets:
+            return []
+        now = datetime.now()
+        with self.db.transaction():
+            return [self.notification_repo._create(Notification(
+                member_id=member_id, type=type, title=title, body=body,
+                ref=ref, created_at=now)) for member_id in targets]
+
+    def send_to_roles(self, roles, *, type: str, title: str,
+                      body: str | None = None, ref: str | None = None) -> list[Notification]:
+        """按角色发给所有在社社员（例如"耗材快用完"发给两位运营）。"""
+        wanted = {Role.parse(role) for role in roles}
+        targets = [m.id for m in self.member_repo.list_active() if m.role in wanted]
+        return self.send(targets, type=type, title=title, body=body, ref=ref)
+
+    def list_for(self, operator_id: int, *,
+                 unread_only: bool = False) -> list[Notification]:
+        self._operator_only(operator_id)
+        return self.notification_repo.list_by_member(operator_id, unread_only=unread_only)
+
+    def unread_count(self, operator_id: int) -> int:
+        self._operator_only(operator_id)
+        return self.notification_repo.count_unread(operator_id)
+
+    def has_unread_ref(self, ref: str) -> bool:
+        return self.notification_repo.find_unread_by_ref(ref) is not None
+
+    def mark_read(self, operator_id: int, notification_id: int) -> Notification:
+        """标记已读：只能读自己的通知。"""
+        self._operator_only(operator_id)
+        notification = self.notification_repo._get(notification_id)
+        if notification is None:
+            raise ValueError(f"通知不存在: {notification_id}")
+        if notification.member_id != operator_id:
+            raise PermissionError("只能读自己的通知")
+        if notification.read_at is not None:
+            return notification
+
+        updated = replace(notification, read_at=datetime.now())
+        with self.db.transaction():
+            self.notification_repo._update(updated)
+        return updated
+
+    def mark_all_read(self, operator_id: int) -> int:
+        self._operator_only(operator_id)
+        unread = self.notification_repo.list_by_member(operator_id, unread_only=True)
+        now = datetime.now()
+        with self.db.transaction():
+            for notification in unread:
+                self.notification_repo._update(replace(notification, read_at=now))
+        return len(unread)
+
+
+class StockAlertService(_Service):
+    """耗材余量告警：出库跨过阈值时通知两位运营（op1 / op2，权限共享所以都发）。"""
+
+    NOTIFY_ROLES = (Role.OP1, Role.OP2)
+
+    def __init__(self, db: TransactionManager, member_repo: MemberRepository,
+                 settings: SettingsService, inventory_repo: InventoryTransactionRepository,
+                 filament_repo: FilamentRepository,
+                 notifications: NotificationService) -> None:
+        super().__init__(db, member_repo)
+        self.settings = settings
+        self.inventory_repo = inventory_repo
+        self.filament_repo = filament_repo
+        self.notifications = notifications
+
+    def threshold(self) -> float:
+        return self.settings.low_stock_threshold()
+
+    def low_stock(self) -> list[tuple[Filament, float]]:
+        """当前低于阈值的耗材（含剩余量）；阈值 <= 0 表示关闭告警。"""
+        threshold = self.threshold()
+        if threshold <= 0:
+            return []
+        return [(filament, self.inventory_repo.stock_of(filament.id))
+                for filament in self.filament_repo._list()
+                if self.inventory_repo.stock_of(filament.id) < threshold]
+
+    def after_outbound(self, filament_id: int, stock_before: float) -> list[Notification]:
+        """出库后调用：只有"从阈值之上掉到阈值之下"才发通知，避免重复刷屏。"""
+        threshold = self.threshold()
+        if threshold <= 0 or stock_before < threshold:
+            return []
+
+        stock_after = self.inventory_repo.stock_of(filament_id)
+        if stock_after >= threshold:
+            return []
+
+        filament = self.filament_repo._get(filament_id)
+        name = filament.name if filament is not None else f"#{filament_id}"
+        ref = f"filament:{filament_id}"
+        if self.notifications.has_unread_ref(ref):
+            return []
+
+        return self.notifications.send_to_roles(
+            self.NOTIFY_ROLES, type="low_stock",
+            title=f"耗材快用完了：{name} 只剩 {stock_after:g} 克",
+            body=(f"低库存阈值 {threshold:g} 克；本次出库让库存从 {stock_before:g} 克降到 "
+                  f"{stock_after:g} 克，记得安排采购。"),
+            ref=ref,
+        )
+
 
 class ReportService(_Service):
     """额度单、库存、经费报表（只读，但同样校验权限）。"""
@@ -805,3 +977,6 @@ class Services:
     report: ReportService
     user: UserService
     reservation: ReservationService
+    settings: SettingsService
+    notification: NotificationService
+    stock_alert: StockAlertService

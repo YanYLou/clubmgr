@@ -26,7 +26,8 @@ MEMORY = ":memory:"
 #   2 = records 增加 filament_id、去掉 fee / is_charged，并补上索引
 #   3 = 新增 users 表（登录账号，阶段 2.2）
 #   4 = reservations 增加审核人 / 审核时间，并加"同一天同一人只能有一条已通过"唯一索引
-SCHEMA_VERSION = 4
+#   5 = 新增 settings（全局配置）与 notifications（站内通知）
+SCHEMA_VERSION = 5
 
 class Database:
     def __init__(self, path: str | Path, *, check_same_thread: bool = True):

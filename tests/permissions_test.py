@@ -12,7 +12,9 @@ from domain.permissions import (ACTIONS, ADMINS, FULL, MATRIX, OPS, can,
 
 FULL_ROLES = (Role.PRESIDENT, Role.VICE_PRESIDENT_1,
               Role.VICE_PRESIDENT_2, Role.TEACHER)
-BUSINESS_ACTIONS = tuple(action for action in ACTIONS if action != "manage_users")
+# 只给"管理页"那一档的动作：副社长2号没有
+ADMIN_ACTIONS = ("manage_users", "manage_settings")
+BUSINESS_ACTIONS = tuple(action for action in ACTIONS if action not in ADMIN_ACTIONS)
 
 
 def test_full_roles_can_do_every_business_action():
@@ -22,17 +24,18 @@ def test_full_roles_can_do_every_business_action():
 
 
 def test_admin_page_only_for_president_vp1_and_teacher():
-    """拍板结论：管理页 / 账号页只给社长、副社长1号、老师。"""
+    """拍板结论：管理页 / 账号页 / 全局配置只给社长、副社长1号、老师。"""
     assert set(ADMINS) == {Role.PRESIDENT, Role.VICE_PRESIDENT_1, Role.TEACHER}
 
-    assert can(Role.PRESIDENT, "manage_users") is True
-    assert can(Role.VICE_PRESIDENT_1, "manage_users") is True
-    assert can(Role.TEACHER, "manage_users") is True
-    assert can(Role.VICE_PRESIDENT_2, "manage_users") is False
-    assert can(Role.OP1, "manage_users") is False
-    assert can(Role.OP2, "manage_users") is False
-    assert can(Role.HR, "manage_users") is False
-    assert can(Role.MEMBER, "manage_users") is False
+    for action in ADMIN_ACTIONS:
+        assert can(Role.PRESIDENT, action) is True, action
+        assert can(Role.VICE_PRESIDENT_1, action) is True, action
+        assert can(Role.TEACHER, action) is True, action
+        assert can(Role.VICE_PRESIDENT_2, action) is False, action
+        assert can(Role.OP1, action) is False, action
+        assert can(Role.OP2, action) is False, action
+        assert can(Role.HR, action) is False, action
+        assert can(Role.MEMBER, action) is False, action
 
 
 def test_teacher_has_president_level_permissions():

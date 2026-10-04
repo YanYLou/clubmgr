@@ -21,11 +21,14 @@ from domain.services import (
     FilamentService,
     FundService,
     MemberService,
+    NotificationService,
     QuotaService,
     RecordService,
     ReportService,
     ReservationService,
     Services,
+    SettingsService,
+    StockAlertService,
     UserService,
 )
 from infrastructure.db import Database
@@ -35,9 +38,11 @@ from infrastructure.repositories import (
     SQLiteFundRepo,
     SQLiteInventoryRepo,
     SQLiteMemberRepo,
+    SQLiteNotificationRepo,
     SQLiteQuotaRepo,
     SQLiteRecordRepo,
     SQLiteReservationRepo,
+    SQLiteSettingRepo,
     SQLiteUserRepo,
 )
 
@@ -56,7 +61,7 @@ def ensure_data_dir() -> Path:
 
 
 def build_repositories(db: Database) -> SimpleNamespace:
-    """构造具体仓储（阶段 1.4 新增，阶段 2.2 加入 users，阶段 2.3 加入 reservations）。"""
+    """构造具体仓储（阶段 1.4 起，逐步加入 users / reservations / settings / notifications）。"""
     return SimpleNamespace(
         member=SQLiteMemberRepo(db),
         record=SQLiteRecordRepo(db),
@@ -67,17 +72,26 @@ def build_repositories(db: Database) -> SimpleNamespace:
         contribution=SQLiteContributionRepo(db),
         user=SQLiteUserRepo(db),
         reservation=SQLiteReservationRepo(db),
+        setting=SQLiteSettingRepo(db),
+        notification=SQLiteNotificationRepo(db),
     )
 
 
 def build_services(db: Database) -> Services:
-    """把仓储注入服务层（阶段 1.4 新增）。"""
+    """把仓储注入服务层（阶段 1.4 起）。"""
     repos = build_repositories(db)
+
+    # 阶段 3.2：这几个服务互相引用，先建好再注入
+    settings = SettingsService(db, repos.member, repos.setting)
+    notification = NotificationService(db, repos.member, repos.notification)
+    stock_alert = StockAlertService(db, repos.member, settings, repos.inventory,
+                                    repos.filament, notification)
+
     return Services(
         member=MemberService(db, repos.member),
         quota=QuotaService(db, repos.member, repos.quota),
         record=RecordService(db, repos.member, repos.record, repos.quota,
-                             repos.filament, repos.inventory),
+                             repos.filament, repos.inventory, alerts=stock_alert),
         filament=FilamentService(db, repos.member, repos.filament,
                                  repos.inventory, repos.fund),
         fund=FundService(db, repos.member, repos.fund),
@@ -88,6 +102,9 @@ def build_services(db: Database) -> Services:
                              repos.contribution),
         user=UserService(db, repos.member, repos.user),
         reservation=ReservationService(db, repos.member, repos.reservation),
+        settings=settings,
+        notification=notification,
+        stock_alert=stock_alert,
     )
 
 
