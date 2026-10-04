@@ -1,6 +1,6 @@
 
 -- 建表脚本，只在空库上执行（见 infrastructure/db.py 的 _init_schema）。
--- 结构版本：7 —— 与 db.py 的 SCHEMA_VERSION 保持一致；改动本文件必须同步 +1。
+-- 结构版本：8 —— 与 db.py 的 SCHEMA_VERSION 保持一致；改动本文件必须同步 +1。
 
 CREATE TABLE members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,11 +87,13 @@ CREATE TABLE reservations (
     urgent_by INTEGER,                            -- 紧急提前 / 挤掉的操作人（阶段 3.4）
     urgent_reason TEXT,                           -- 紧急原因（留痕）
     urgent_at TEXT,                               -- 紧急操作时间
+    slot_id INTEGER,                              -- 排进哪个时间格（阶段 3.6）
     note TEXT,
     FOREIGN KEY (member_id) REFERENCES members(id),
     FOREIGN KEY (operator_id) REFERENCES members(id),
     FOREIGN KEY (reviewer_id) REFERENCES members(id),
-    FOREIGN KEY (urgent_by) REFERENCES members(id)
+    FOREIGN KEY (urgent_by) REFERENCES members(id),
+    FOREIGN KEY (slot_id) REFERENCES schedule_slots(id)
 );
 
 CREATE TABLE contributions (
@@ -166,6 +168,23 @@ CREATE TABLE printers (
     FOREIGN KEY (updated_by) REFERENCES members(id)
 );
 CREATE INDEX ix_printers_status ON printers(status);
+
+-- 排班时间格（阶段 3.6）：默认每周一 / 三 / 五各一格 16:55–17:40，运营1 可以改时间、加格子、停用；
+-- capacity = 0 表示"按当时可用打印机台数"算容量
+CREATE TABLE schedule_slots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    week_start TEXT NOT NULL,        -- 归属周（周一）
+    slot_date TEXT NOT NULL,         -- 真实日期："周三改周四"就是改这里
+    start_time TEXT NOT NULL,        -- HH:MM
+    end_time TEXT NOT NULL,          -- HH:MM
+    capacity INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'open',     -- open / closed
+    note TEXT,
+    created_at TEXT,
+    created_by INTEGER,
+    FOREIGN KEY (created_by) REFERENCES members(id)
+);
+CREATE INDEX ix_schedule_slots_week ON schedule_slots(week_start, slot_date, start_time);
 
 -- 预约（阶段 2.3 新增）：提交不设限，只有「已通过」才进排班表；
 -- 部分唯一索引保证同一天同一人最多一条已通过的排班（待审核 / 被驳回的不受限制）

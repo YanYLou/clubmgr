@@ -35,6 +35,7 @@ from domain.models import (
     Record,
     Reservation,
     Role,
+    ScheduleSlot,
     Setting,
     User,
 )
@@ -50,6 +51,7 @@ from domain.repositories import (
     RecordRepository,
     Repository,
     ReservationRepository,
+    ScheduleSlotRepository,
     SettingRepository,
     UserRepository,
 )
@@ -462,6 +464,34 @@ class SQLiteReservationRepo(SQLite3Repository[Reservation], ReservationRepositor
             "WHERE week_start = ? AND activity_day = ? AND member_id = ? "
             "AND status = 'pending' LIMIT 1",
             (week_start.isoformat(), activity_day, member_id),
+        )
+
+    def list_by_slot(self, slot_id: int) -> list[Reservation]:
+        return self._query(
+            f"SELECT {self._columns} FROM reservations WHERE slot_id = ? "
+            "ORDER BY order_no, id",
+            (slot_id,),
+        )
+
+
+class SQLiteScheduleSlotRepo(SQLite3Repository[ScheduleSlot], ScheduleSlotRepository):
+    """时间格（阶段 3.6 新增）。"""
+
+    table = "schedule_slots"
+    entity_cls = ScheduleSlot
+
+    def list_by_week(self, week_start: date) -> list[ScheduleSlot]:
+        return self._query(
+            f"SELECT {self._columns} FROM schedule_slots WHERE week_start = ? "
+            "ORDER BY slot_date, start_time, id",
+            (week_start.isoformat(),),
+        )
+
+    def find_by_date(self, slot_date: date) -> list[ScheduleSlot]:
+        return self._query(
+            f"SELECT {self._columns} FROM schedule_slots WHERE slot_date = ? "
+            "ORDER BY start_time, id",
+            (slot_date.isoformat(),),
         )
 
 

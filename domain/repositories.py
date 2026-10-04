@@ -101,6 +101,14 @@ class ReservationRepository(Repository[Reservation]):
     @abstractmethod
     def find_pending(self, week_start: date, activity_day: str,
                      member_id: int) -> Reservation | None: ...
+    @abstractmethod
+    def list_by_slot(self, slot_id: int) -> list[Reservation]: ...      # 阶段 3.6 新增
+
+class ScheduleSlotRepository(Repository[ScheduleSlot]):                 # 阶段 3.6 新增
+    @abstractmethod
+    def list_by_week(self, week_start: date) -> list[ScheduleSlot]: ...
+    @abstractmethod
+    def find_by_date(self, slot_date: date) -> list[ScheduleSlot]: ...
 
 class ContributionRepository(Repository[Contribution]):
     @abstractmethod

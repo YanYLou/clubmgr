@@ -34,6 +34,7 @@ from domain.models import (
     Record,
     Reservation,
     Role,
+    ScheduleSlot,
     Setting,
     User,
 )
@@ -49,6 +50,7 @@ from domain.repositories import (
     QuotaTransactionRepository,
     RecordRepository,
     ReservationRepository,
+    ScheduleSlotRepository,
     SettingRepository,
     TransactionManager,
     UserRepository,
@@ -67,6 +69,12 @@ SETTING_LOW_STOCK = "low_stock_threshold"          # 全局配置键（阶段 3.
 DEFAULT_LOW_STOCK_THRESHOLD = 100.0                # 默认低库存阈值（克）
 PRINTER_STATUSES = ("idle", "in_use", "maintenance")          # 阶段 3.3
 PRINTER_STATUS_LABELS = {"idle": "空闲", "in_use": "使用中", "maintenance": "维修中"}
+DEFAULT_SLOT_START = "16:55"                                  # 阶段 3.6：默认时段
+DEFAULT_SLOT_END = "17:40"
+DEFAULT_ACTIVITY_WEEKDAYS = (0, 2, 4)                         # 周一 / 周三 / 周五
+ACTIVITY_DAY_WEEKDAYS = {"mon": 0, "wed": 2, "fri": 4}        # 活动日 → 距周一的偏移
+SLOT_STATUSES = ("open", "closed")
+WEEKDAY_LABELS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 _EDITABLE_MEMBER_FIELDS = frozenset(
     {"name", "qq", "student_id", "role", "status", "join_date", "note"}
 )
@@ -103,6 +111,16 @@ def _note_or_error(note: str | None, label: str) -> str:
     if not text:
         raise ValueError(f"{label}必须写备注（说明原因）")
     return text
+
+
+def _time_or_error(text: str | None, label: str) -> str:
+    value = (text or "").strip()
+    try:
+        datetime.strptime(value, "%H:%M")
+    except ValueError:
+        raise ValueError(
+            f"{label}要写成 HH:MM，例如 16:55（收到 {text!r}）") from None
+    return value
 
 
 class _Service:
@@ -826,6 +844,314 @@ class PrinterService(_Service):
         return printer
 
 
+class ScheduleService(_Service):
+    """时间格排班（阶段 3.6）。
+
+    规则（按选择题确认的答案）：
+
+    - 默认每周一 / 三 / 五各一格 **16:55–17:40**，运营1 可以改时间、加格子、停用；
+    - ``slot_date`` 是真实日期，"周三改周四"就是改日期；**改动日期或停用**会让那一格上的人
+      变成"待重排"并收到通知（不自动平移，由人工重新安排）；
+    - **容量**：格子上没写死容量（``capacity = 0``）时，按**当时可用打印机台数**算
+      （3 台；在维修或被老师占用就少几台）；
+    - 手工排人（``assign``）与一键填充（``auto_fill``）需要 ``schedule`` 权限
+      （社长 / 副社长 / 老师 / 两位运营）；
+    - 任何登录用户都能看这一周的时间格与里面的人（社员要知道自己排在哪一格）。
+    """
+
+    def __init__(self, db: TransactionManager, member_repo: MemberRepository,
+                 slot_repo: ScheduleSlotRepository,
+                 reservation_repo: ReservationRepository,
+                 printers: PrinterService | None = None,
+                 notifications: NotificationService | None = None) -> None:
+        super().__init__(db, member_repo)
+        self.slot_repo = slot_repo
+        self.reservation_repo = reservation_repo
+        self.printers = printers
+        self.notifications = notifications
+
+    # -- 容量 ---------------------------------------------------------------
+
+    def available_printers(self) -> int:
+        """当前空闲打印机台数（没接打印机服务时按 0 算）。"""
+        return self.printers.available_count() if self.printers is not None else 0
+
+    def capacity_of(self, slot: ScheduleSlot) -> int:
+        """这一格能排几个人：写了容量就用它，否则按当时可用打印机台数。"""
+        return slot.capacity if slot.capacity else self.available_printers()
+
+    # -- 生成与查看 ---------------------------------------------------------
+
+    def ensure_week(self, operator_id: int,
+                    week_start: date | None = None) -> list[ScheduleSlot]:
+        """按默认规则补齐这一周的时间格（幂等：已有的不重复建）。"""
+        operator = self._operator(operator_id, "schedule")
+        week = _week_start(week_start)
+        existing = {slot.slot_date for slot in self.slot_repo.list_by_week(week)}
+
+        created: list[ScheduleSlot] = []
+        with self.db.transaction():
+            for weekday in DEFAULT_ACTIVITY_WEEKDAYS:
+                slot_date = week + timedelta(days=weekday)
+                if slot_date in existing:
+                    continue
+                created.append(self.slot_repo._create(ScheduleSlot(
+                    week_start=week, slot_date=slot_date,
+                    start_time=DEFAULT_SLOT_START, end_time=DEFAULT_SLOT_END,
+                    capacity=0, status="open", note="默认时段",
+                    created_at=datetime.now(), created_by=operator.id)))
+        return created
+
+    def week_view(self, operator_id: int, week_start: date | None = None) -> dict:
+        """这一周的时间格：每格排了谁、还剩几个位置、当时有几台打印机可用。"""
+        self._operator_only(operator_id)
+        week = _week_start(week_start)
+        slots = self.slot_repo.list_by_week(week)
+        reservations = self.reservation_repo.list_by_week(week)
+
+        by_slot: dict[int, list[Reservation]] = {}
+        for reservation in reservations:
+            if reservation.slot_id is not None:
+                by_slot.setdefault(reservation.slot_id, []).append(reservation)
+
+        available = self.available_printers()
+        items = []
+        for slot in slots:
+            assigned = sorted(by_slot.get(slot.id, []), key=lambda r: (r.order_no, r.id))
+            capacity = slot.capacity or available
+            items.append({
+                "slot": slot,
+                "weekday_label": WEEKDAY_LABELS[slot.slot_date.weekday()],
+                "assigned": assigned,
+                "capacity": capacity,
+                "free": max(capacity - len(assigned), 0),
+            })
+
+        return {
+            "week_start": week,
+            "slots": items,
+            "unassigned": [r for r in reservations
+                           if r.status == "approved" and r.slot_id is None],
+            "names": self.member_repo.names_for([r.member_id for r in reservations]),
+            "available_printers": available,
+        }
+
+    # -- 时间格管理 ---------------------------------------------------------
+
+    def add_slot(self, operator_id: int, *, slot_date: date, start_time: str,
+                 end_time: str, capacity: int = 0,
+                 note: str | None = None) -> ScheduleSlot:
+        """临时加一格（例如补一个周四的时段）。"""
+        operator = self._operator(operator_id, "schedule")
+        start = _time_or_error(start_time, "开始时间")
+        end = _time_or_error(end_time, "结束时间")
+        if end <= start:
+            raise ValueError(f"结束时间要晚于开始时间（{start} → {end}）")
+        if capacity < 0:
+            raise ValueError("容量不能为负（0 = 按当时可用打印机台数）")
+
+        with self.db.transaction():
+            return self.slot_repo._create(ScheduleSlot(
+                week_start=_week_start(slot_date), slot_date=slot_date,
+                start_time=start, end_time=end, capacity=capacity,
+                status="open", note=note, created_at=datetime.now(),
+                created_by=operator.id))
+
+    def update_slot(self, operator_id: int, slot_id: int, *,
+                    slot_date: date | None = None, start_time: str | None = None,
+                    end_time: str | None = None, capacity: int | None = None,
+                    note: str | None = None) -> ScheduleSlot:
+        """改时间 / 改日期 / 改容量。**改日期**会把这一格上的人标成"待重排"并通知他们。"""
+        operator = self._operator(operator_id, "schedule")
+        slot = self._slot(slot_id)
+
+        new_date = slot_date or slot.slot_date
+        new_start = _time_or_error(start_time, "开始时间") if start_time else slot.start_time
+        new_end = _time_or_error(end_time, "结束时间") if end_time else slot.end_time
+        if new_end <= new_start:
+            raise ValueError(f"结束时间要晚于开始时间（{new_start} → {new_end}）")
+        if capacity is not None and capacity < 0:
+            raise ValueError("容量不能为负（0 = 按当时可用打印机台数）")
+
+        date_changed = new_date != slot.slot_date
+        assigned = self.reservation_repo.list_by_slot(slot.id)
+        now = datetime.now()
+
+        updated = replace(slot, slot_date=new_date, week_start=_week_start(new_date),
+                          start_time=new_start, end_time=new_end,
+                          capacity=capacity if capacity is not None else slot.capacity,
+                          note=note if note is not None else slot.note)
+        with self.db.transaction():
+            self.slot_repo._update(updated)
+            if date_changed:
+                self._release_assignments(
+                    assigned, reason=(f"活动日从 {slot.slot_date}（{WEEKDAY_LABELS[slot.slot_date.weekday()]}）"
+                                      f"改到 {new_date}（{WEEKDAY_LABELS[new_date.weekday()]}）"))
+        return updated
+
+    def close_slot(self, operator_id: int, slot_id: int, *,
+                   note: str | None = None) -> ScheduleSlot:
+        """停用一格（当天不开放）：格子上的人变成"待重排"并收到通知。"""
+        operator = self._operator(operator_id, "schedule")
+        slot = self._slot(slot_id)
+        assigned = self.reservation_repo.list_by_slot(slot.id)
+        reason = (note or "").strip() or "这一格被停用"
+
+        updated = replace(slot, status="closed", note=reason)
+        with self.db.transaction():
+            self.slot_repo._update(updated)
+            self._release_assignments(assigned, reason=reason)
+        return updated
+
+    def reopen_slot(self, operator_id: int, slot_id: int, *,
+                    note: str | None = None) -> ScheduleSlot:
+        operator = self._operator(operator_id, "schedule")
+        slot = self._slot(slot_id)
+        updated = replace(slot, status="open", note=note or slot.note)
+        with self.db.transaction():
+            self.slot_repo._update(updated)
+        return updated
+
+    # -- 排人 ---------------------------------------------------------------
+
+    def assign(self, operator_id: int, reservation_id: int,
+               slot_id: int) -> Reservation:
+        """把一条**已通过**的预约排进某个时间格（校验容量与"同一天同一人一条"）。"""
+        self._operator(operator_id, "schedule")
+        reservation = self._reservation(reservation_id)
+        slot = self._slot(slot_id)
+
+        if reservation.status != "approved":
+            raise ValueError(
+                f"只有已通过的预约能排进时间格（这条是 {reservation.status}）；"
+                f"待重排的请先重新审核通过")
+        if slot.status != "open":
+            raise ValueError(f"{slot.slot_date} {slot.start_time} 这一格已停用")
+        if reservation.week_start != slot.week_start:
+            raise ValueError("预约与时间格不在同一周")
+
+        assigned = self.reservation_repo.list_by_slot(slot.id)
+        if any(item.id == reservation.id for item in assigned):
+            return reservation                       # 已经在这一格，幂等
+        capacity = self.capacity_of(slot)
+        if len(assigned) >= capacity:
+            raise ValueError(
+                f"{slot.slot_date} {slot.start_time}-{slot.end_time} 已排满"
+                f"（{len(assigned)}/{capacity}）")
+        self._check_same_day(reservation, slot)
+
+        updated = replace(reservation, slot_id=slot.id)
+        with self.db.transaction():
+            self.reservation_repo._update(updated)
+        return updated
+
+    def unassign(self, operator_id: int, reservation_id: int) -> Reservation:
+        """把某人从时间格里拿出来（还在排班表里，只是没指定格子）。"""
+        self._operator(operator_id, "schedule")
+        reservation = self._reservation(reservation_id)
+        if reservation.slot_id is None:
+            return reservation
+        updated = replace(reservation, slot_id=None)
+        with self.db.transaction():
+            self.reservation_repo._update(updated)
+        return updated
+
+    def auto_fill(self, operator_id: int, week_start: date | None = None, *,
+                  slot_date: date | None = None) -> dict:
+        """一键填充：把这一周"已通过但没排格子"的预约按顺序填进空格子。
+
+        优先填到与它活动日相同的那一天；那天没格子或排满了，再按时间顺序找别的格子。
+        """
+        self._operator(operator_id, "schedule")
+        week = _week_start(week_start)
+        self.ensure_week(operator_id, week)
+
+        slots = [slot for slot in self.slot_repo.list_by_week(week)
+                 if slot.status == "open" and (slot_date is None or slot.slot_date == slot_date)]
+        if not slots:
+            return {"week_start": week, "assigned": [], "skipped": [], "reason": "本周没有可用的时间格"}
+
+        counts = {slot.id: len(self.reservation_repo.list_by_slot(slot.id)) for slot in slots}
+        capacities = {slot.id: self.capacity_of(slot) for slot in slots}
+
+        order = {day: index for index, day in enumerate(ACTIVITY_DAYS)}
+        waiting = sorted(
+            (r for r in self.reservation_repo.list_by_week(week)
+             if r.status == "approved" and r.slot_id is None),
+            key=lambda r: (order.get(r.activity_day, 99), r.order_no or 0, r.id))
+
+        assigned, skipped = [], []
+        for reservation in waiting:
+            target = self._pick_slot(slots, counts, capacities, reservation, week)
+            if target is None:
+                skipped.append(reservation)
+                continue
+            self.assign(operator_id, reservation.id, target.id)
+            counts[target.id] += 1
+            assigned.append(reservation)
+
+        return {"week_start": week, "assigned": assigned, "skipped": skipped}
+
+    # -- 内部 ---------------------------------------------------------------
+
+    def _pick_slot(self, slots, counts, capacities, reservation,
+                   week: date) -> ScheduleSlot | None:
+        offset = ACTIVITY_DAY_WEEKDAYS.get(reservation.activity_day)
+        wanted_date = week + timedelta(days=offset) if offset is not None else None
+
+        candidates = [slot for slot in slots if slot.slot_date == wanted_date] + \
+                     [slot for slot in slots if slot.slot_date != wanted_date]
+        for slot in candidates:
+            if counts[slot.id] >= capacities[slot.id]:
+                continue
+            if self._same_day_taken(reservation, slot):
+                continue
+            return slot
+        return None
+
+    def _check_same_day(self, reservation: Reservation, slot: ScheduleSlot) -> None:
+        if self._same_day_taken(reservation, slot):
+            raise ValueError(
+                f"该社员 {slot.slot_date} 已经在别的时间格里排过了（同一天只能一条）")
+
+    def _same_day_taken(self, reservation: Reservation, slot: ScheduleSlot) -> bool:
+        for other in self.reservation_repo.list_by_week(slot.week_start):
+            if other.id == reservation.id or other.slot_id is None:
+                continue
+            if other.member_id != reservation.member_id:
+                continue
+            other_slot = self.slot_repo._get(other.slot_id)
+            if other_slot is not None and other_slot.slot_date == slot.slot_date:
+                return True
+        return False
+
+    def _release_assignments(self, reservations, *, reason: str) -> None:
+        """把受影响的人退回"待重排"并通知（活动日变动 / 停用格子）。"""
+        now = datetime.now()
+        for reservation in reservations:
+            self.reservation_repo._update(replace(
+                reservation, status="reschedule", slot_id=None,
+                urgent_reason=reason, urgent_at=now))
+            if self.notifications is not None:
+                self.notifications.send(
+                    [reservation.member_id], type="slot_changed",
+                    title=f"你的排班要重新安排（{reservation.week_start}）",
+                    body=f"{reason}；请重新选时间，运营会帮你重排。",
+                    ref=f"reservation:{reservation.id}")
+
+    def _slot(self, slot_id: int) -> ScheduleSlot:
+        slot = self.slot_repo._get(slot_id)
+        if slot is None:
+            raise ValueError(f"时间格不存在: {slot_id}")
+        return slot
+
+    def _reservation(self, reservation_id: int) -> Reservation:
+        reservation = self.reservation_repo._get(reservation_id)
+        if reservation is None:
+            raise ValueError(f"预约不存在: {reservation_id}")
+        return reservation
+
+
 class ReportService(_Service):
     """额度单、库存、经费报表（只读，但同样校验权限）。"""
 
@@ -1346,3 +1672,4 @@ class Services:
     notification: NotificationService
     stock_alert: StockAlertService
     printer: PrinterService
+    schedule: ScheduleService

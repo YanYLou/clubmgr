@@ -28,6 +28,9 @@
 
 阶段 3.4 变更：``Reservation`` 增加 ``urgent_by`` / ``urgent_reason`` / ``urgent_at``
 （紧急任务提前/挤掉的留痕），并新增 ``reschedule``（待重排）状态。结构版本升到 7。
+
+阶段 3.6 变更：新增 ``ScheduleSlot``（可编辑的时间格），``Reservation`` 增加 ``slot_id``。
+结构版本升到 8。
 """
 
 import datetime
@@ -151,7 +154,27 @@ class Reservation:
     urgent_by: Optional[int] = None            # 紧急提前 / 挤掉的操作人（阶段 3.4）
     urgent_reason: Optional[str] = None        # 紧急原因（留痕）
     urgent_at: Optional[datetime.datetime] = None
+    slot_id: Optional[int] = None              # 排进哪个时间格（阶段 3.6）
     note: Optional[str] = None
+
+@dataclass
+class ScheduleSlot:
+    """排班时间格（阶段 3.6 新增）。
+
+    默认每周一 / 三 / 五各一格 16:55–17:40；``slot_date`` 是真实日期，所以"周三改周四"就是改它。
+    ``capacity`` 为 0 表示按**当时可用打印机台数**算容量。
+    """
+
+    id: Optional[int] = None
+    week_start: datetime.date = field(default_factory=date.today)
+    slot_date: datetime.date = field(default_factory=date.today)
+    start_time: str = ""              # HH:MM
+    end_time: str = ""                # HH:MM
+    capacity: int = 0                 # 0 = 按当时可用打印机台数
+    status: str = "open"              # open / closed
+    note: Optional[str] = None
+    created_at: Optional[datetime.datetime] = None
+    created_by: Optional[int] = None
 
 @dataclass
 class Contribution:

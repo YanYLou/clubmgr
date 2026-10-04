@@ -29,7 +29,8 @@ MEMORY = ":memory:"
 #   5 = 新增 settings（全局配置）与 notifications（站内通知）
 #   6 = 新增 printers（打印机状态）
 #   7 = reservations 增加紧急操作留痕（urgent_by / urgent_reason / urgent_at）
-SCHEMA_VERSION = 7
+#   8 = 新增 schedule_slots（时间格），reservations 增加 slot_id
+SCHEMA_VERSION = 8
 
 class Database:
     def __init__(self, path: str | Path, *, check_same_thread: bool = True):
