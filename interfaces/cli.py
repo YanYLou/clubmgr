@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from domain.models import Role
+from domain.services import ACTIVITY_DAYS, DAY_LABELS
 from infrastructure.backup import (DEFAULT_KEEP, create_backup,
                                    default_backup_dir, list_backups)
 from infrastructure.db import SCHEMA_VERSION, Database
@@ -282,6 +283,45 @@ def build_parser() -> argparse.ArgumentParser:
     p = user.add_parser("disable", help="停用账号")
     p.add_argument("--user", required=True, help="账号 id 或账号名")
     p.set_defaults(handler=_user_disable)
+
+    # --- reservation（阶段 2.3）-------------------------------------------
+    reservation = top.add_parser("reservation", help="预约：提交 → 审核 → 排班").add_subparsers(
+        dest="action", required=True)
+
+    p = reservation.add_parser("add", help="提交预约（谁都能提交）")
+    p.add_argument("--day", required=True, choices=list(ACTIVITY_DAYS),
+                   help="活动日：mon / wed / fri")
+    p.add_argument("--week", help="该周任意日期 YYYY-MM-DD（默认本周，自动归一到周一）")
+    p.add_argument("--member", help="替别人提交（需要预约安排权限）；默认自己")
+    p.add_argument("--note")
+    p.set_defaults(handler=_reservation_add)
+
+    p = reservation.add_parser("mine", help="我的预约")
+    p.add_argument("--member", help="看别人的（需要审核权限）")
+    p.set_defaults(handler=_reservation_mine)
+
+    p = reservation.add_parser("pending", help="待审核队列（需要审核权限）")
+    p.set_defaults(handler=_reservation_pending)
+
+    p = reservation.add_parser("approve", help="审核通过（社长 / 副社长 / 运维）")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--order", type=int, help="排班序号（默认排在当天最后）")
+    p.add_argument("--note")
+    p.set_defaults(handler=_reservation_approve)
+
+    p = reservation.add_parser("reject", help="驳回（社长 / 副社长 / 运维）")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--note", help="驳回原因")
+    p.set_defaults(handler=_reservation_reject)
+
+    p = reservation.add_parser("cancel", help="撤销预约（本人，或审核人代撤）")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--note")
+    p.set_defaults(handler=_reservation_cancel)
+
+    p = reservation.add_parser("schedule", help="排班表（已通过的预约）")
+    p.add_argument("--week", help="该周任意日期 YYYY-MM-DD（默认本周）")
+    p.set_defaults(handler=_reservation_schedule)
 
     # --- 维护（阶段 2.4）--------------------------------------------------
     p = top.add_parser("doctor", help="体检：结构版本、完整性、外键与可疑数据")
@@ -595,6 +635,104 @@ def _report_export(args, services) -> Result:
     rows = [[path.name, f"{path.stat().st_size} 字节", str(path.parent)] for path in files]
     payload = {"markdown": str(markdown), "files": [str(path) for path in files]}
     return Result(f"已导出公示报表：{markdown}", ["文件", "大小", "目录"], rows, payload)
+
+
+# ---------------------------------------------------------------------------
+# 预约（阶段 2.3）
+# ---------------------------------------------------------------------------
+
+def _reservation_rows(services, reservations) -> Result:
+    """预约列表统一成"给人看"的表：member_id 换成姓名，活动日换成中文。"""
+    reservations = list(reservations)
+    names = services.member.names_for([r.member_id for r in reservations])
+    rows = [[str(r.id), names.get(r.member_id, f"#{r.member_id}"),
+             r.week_start.isoformat(),
+             DAY_LABELS.get(r.activity_day, r.activity_day),
+             str(r.order_no) if r.order_no else "-",
+             r.status, r.note or "-"]
+            for r in reservations]
+    payload = [{"id": r.id, "member_id": r.member_id,
+                "member_name": names.get(r.member_id),
+                "week_start": r.week_start.isoformat(), "activity_day": r.activity_day,
+                "order_no": r.order_no, "status": r.status,
+                "reviewer_id": r.reviewer_id, "note": r.note}
+               for r in reservations]
+    return Result("", ["id", "社员", "周", "活动日", "序号", "状态", "备注"], rows, payload)
+
+
+def _reservation_result(services, title: str, reservation) -> Result:
+    result = _reservation_rows(services, [reservation])
+    result.title = title
+    return result
+
+
+def _reservation_add(args, services) -> Result:
+    operator = _operator(args, services)
+    target = _member(args, services, args.member) if args.member else None
+    reservation = services.reservation.create(
+        operator.id, activity_day=args.day, week_start=_date(args.week),
+        member_id=target.id if target else None, note=args.note)
+    return _reservation_result(
+        services, f"已提交预约 #{reservation.id}（待审核）", reservation)
+
+
+def _reservation_mine(args, services) -> Result:
+    operator = _operator(args, services)
+    target = _member(args, services, args.member) if args.member else None
+    rows = services.reservation.mine(operator.id,
+                                     member_id=target.id if target else None)
+    result = _reservation_rows(services, rows)
+    result.title = "预约记录"
+    return result
+
+
+def _reservation_pending(args, services) -> Result:
+    operator = _operator(args, services)
+    result = _reservation_rows(services, services.reservation.pending(operator.id))
+    result.title = "待审核预约"
+    return result
+
+
+def _reservation_approve(args, services) -> Result:
+    operator = _operator(args, services)
+    reservation = services.reservation.review(
+        operator.id, args.id, approve=True, note=args.note, order_no=args.order)
+    return _reservation_result(
+        services, f"已通过预约 #{reservation.id}（排班序号 {reservation.order_no}）",
+        reservation)
+
+
+def _reservation_reject(args, services) -> Result:
+    operator = _operator(args, services)
+    reservation = services.reservation.reject(operator.id, args.id, note=args.note)
+    return _reservation_result(services, f"已驳回预约 #{reservation.id}", reservation)
+
+
+def _reservation_cancel(args, services) -> Result:
+    operator = _operator(args, services)
+    reservation = services.reservation.cancel(operator.id, args.id, note=args.note)
+    return _reservation_result(services, f"已撤销预约 #{reservation.id}", reservation)
+
+
+def _reservation_schedule(args, services) -> Result:
+    operator = _operator(args, services)
+    schedule = services.reservation.schedule(operator.id, week_start=_date(args.week))
+
+    rows: list[list[str]] = []
+    for day, items in schedule["days"]:
+        if not items:
+            rows.append([DAY_LABELS[day], "-", "（空）", "-"])
+            continue
+        for item in items:
+            rows.append([DAY_LABELS[day], str(item.order_no),
+                         schedule["names"].get(item.member_id, f"#{item.member_id}"),
+                         item.note or "-"])
+
+    payload = {"week_start": schedule["week_start"].isoformat(),
+               "days": {day: [asdict(item) for item in items]
+                        for day, items in schedule["days"]}}
+    return Result(f"排班表 · 周 {schedule['week_start']}",
+                  ["活动日", "序号", "社员", "备注"], rows, payload)
 
 
 # ---------------------------------------------------------------------------

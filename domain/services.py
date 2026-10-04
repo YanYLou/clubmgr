@@ -213,6 +213,10 @@ class MemberService(_Service):
         return (self.member_repo.find_by_student_id(token)
                 or self.member_repo.find_by_student_name(token))
 
+    def names_for(self, member_ids: Sequence[int]) -> dict[int, str]:
+        """按 id 批量取姓名（排班表、预约列表、报表渲染用）。"""
+        return self.member_repo.names_for(list(member_ids))
+
     def list_members(self, operator_id: int, *, status: str | None = None,
                      role: Role | str | None = None) -> list[Member]:
         self._operator(operator_id, "view_members")

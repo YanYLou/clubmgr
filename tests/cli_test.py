@@ -182,3 +182,57 @@ def test_cli_doctor_flags_broken_schema(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "结构版本" in out and "异常" in out
 
+
+# ---------------------------------------------------------------------------
+# 预约（阶段 2.3）
+# ---------------------------------------------------------------------------
+
+def _club_for_reservations(cli):
+    cli("member", "bootstrap", "--name", "社长", "--student-id", "10001")
+    cli("--operator", "10001", "member", "add", "--name", "张三", "--student-id", "10005")
+    cli("--operator", "10001", "member", "add", "--name", "运营2",
+        "--student-id", "10002", "--role", "op2")
+
+
+def test_cli_reservation_flow(cli):
+    _club_for_reservations(cli)
+
+    # 谁都能提交
+    out = cli("--operator", "10005", "reservation", "add",
+              "--day", "wed", "--week", "2026-10-05")
+    assert "已提交预约" in out and "pending" in out
+
+    # 待审核队列：普通社员看不到，运维能看（显示姓名而不是 id）
+    assert "权限" in cli("--operator", "10005", "reservation", "pending", expect_code=1)
+    out = cli("--operator", "10002", "reservation", "pending")
+    assert "张三" in out and "pending" in out and "周三" in out
+
+    # 审核通过并排班
+    out = cli("--operator", "10002", "reservation", "approve", "--id", "1")
+    assert "排班序号 1" in out
+
+    # 排班表（所有人可看）
+    out = cli("--operator", "10005", "reservation", "schedule", "--week", "2026-10-05")
+    assert "周三" in out and "张三" in out
+
+    # 撤销后名额释放
+    out = cli("--operator", "10005", "reservation", "cancel", "--id", "1")
+    assert "已撤销预约" in out
+    out = cli("--operator", "10005", "reservation", "mine")
+    assert "cancelled" in out
+
+
+def test_cli_reservation_reject_and_json(cli):
+    _club_for_reservations(cli)
+    cli("--operator", "10005", "reservation", "add", "--day", "mon", "--week", "2026-10-05")
+
+    out = cli("--operator", "10001", "reservation", "reject", "--id", "1",
+              "--note", "当天名额满了")
+    assert "已驳回预约" in out and "当天名额满了" in out
+
+    payload = json.loads(cli("--json", "--operator", "10001", "reservation",
+                             "schedule", "--week", "2026-10-05"))
+    assert payload["week_start"] == "2026-10-05"
+    assert payload["days"]["mon"] == []            # 被驳回的不进排班表
+
+
