@@ -13,23 +13,24 @@
 
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
-| 领域模型 `domain/models.py` | ✅ | 12 个 dataclass（含 `User` / `Setting` / `Notification` / `Printer`）+ `Role` 枚举 |
-| 建表 `infrastructure/schema.sql` | ✅ | 12 张表 + 索引；额度 / 库存 / 经费全部走流水（结构版本 6） |
+| 领域模型 `domain/models.py` | ✅ | 13 个 dataclass（含 `User` / `Setting` / `Notification` / `Printer` / `ScheduleSlot`）+ `Role` 枚举 |
+| 建表 `infrastructure/schema.sql` | ✅ | 13 张表 + 索引；额度 / 库存 / 经费全部走流水（结构版本 8） |
 | 连接与事务 `infrastructure/db.py` | ✅ | 自动建目录、WAL、可嵌套事务（SAVEPOINT）、`close()` 守卫、结构版本校验 |
 | 泛型仓储 `SQLite3Repository` | ✅ | 反射 dataclass 字段生成 CRUD；读回时按类型注解还原 `Role` / `date` / `datetime` |
-| 具体仓储（13 个） | ✅ | 社员 / 打印 / 额度 / 耗材 / 库存 / 经费 / 贡献 / 预约 / 账号 / 配置 / 通知 / 打印机 |
+| 具体仓储（14 个） | ✅ | 社员 / 打印 / 额度 / 耗材 / 库存 / 经费 / 贡献 / 预约 / 时间格 / 账号 / 配置 / 通知 / 打印机 |
 | 权限矩阵 `domain/permissions.py` | ✅ | 20 个动作；副社长分 1/2 号、`teacher` 与社长同级、两位运营权限共享 |
-| 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印 / 耗材 / 经费 / 贡献 / 预约 / 报表 / 账号 / 配置 / 通知 / 余量告警 / 打印机 |
-| 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 + 体检 / 备份 / 导出 / 通知 / 配置 / 打印机 |
-| Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 各业务页面 + 通知页 + 打印机页 |
+| 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印 / 耗材 / 经费 / 贡献 / 预约 / 时间格排班 / 报表 / 账号 / 配置 / 通知 / 余量告警 / 打印机 |
+| 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 + 体检 / 备份 / 导出 / 通知 / 配置 / 打印机 / 排班 |
+| Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 / 注册 + 首页 + 各业务页面 + 通知页 + 打印机页 + 排班页 |
 | 登录与账号（`users` 表） | ✅ | pbkdf2 口令哈希 + 会话登录；账号权限仍取自关联社员的角色 |
 | 自助注册 | ✅ | 社员自己填资料 → 待人事审核 → 通过后才能登录（可驳回，记录保留） |
 | 低库存告警 | ✅ | 全局阈值（`settings`）+ 出库跨阈值时给两位运营发站内通知（`notifications`） |
 | 打印机资源 | ✅ | 3 台机器：空闲 / 使用中（谁、到几点）/ 维修中；老师与运营可标记，可用台数实时可见 |
+| 时间格排班 | ✅ | 默认周一 / 三 / 五 16:55–17:40，可改时间 / 加格子 / 停用；容量按当时可用打印机台数；手工排 + 一键填充 |
 | 装配 `main.py` | ✅ | `build_repositories` / `build_services` / `open_services` + CLI / Web 入口 |
 | 运维工具 | ✅ | `doctor` 体检、`backup` 热备份、`report export` 公示报表（Web 维护页也可用） |
 | 预约排期 `reservations` | ✅ | 谁都能提交，社长 / 副社长 / 运维审核通过后才进排班表（结构版本 4） |
-| 测试与 CI | ✅ | 175 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表、预约与紧急任务、通知、打印机、注册；GitHub Actions 自动跑 |
+| 测试与 CI | ✅ | 195 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表、预约与紧急任务、通知、打印机、排班、注册；GitHub Actions 自动跑 |
 
 一句话：**日常运营闭环（社员 / 打印 / 额度 / 库存 / 经费 / 预约 / 公示 / 备份）都已经可用，
 命令行与 Web 双入口。**
@@ -115,6 +116,36 @@ python main.py --operator 10006 reservation reschedule
   两种操作都留痕（`urgent_by` / `urgent_reason` / `urgent_at`），排班表里显示［紧急］与原因。
 - Web 端有同样的页面：导航「预约」→ 排班表 + 提交表单 + 我的预约 + 审核队列，
   有权限时还会显示「紧急任务」与「待重排」两个区块。
+
+## 排班（时间格）
+
+默认每周一 / 三 / 五各一格 **16:55–17:40**；**每格能排几个人按当时空闲的打印机台数算**（也可以在格子上写死容量）。
+运营1（以及社长 / 副社长 / 老师）负责排人，**所有登录用户都能看这一周的安排**。
+
+```powershell
+# 看这一周（--ensure 会先按默认规则补齐周一/三/五三格）
+python main.py --operator 10006 schedule week --week 2026-10-05 --ensure
+
+# 一键填充：把"已通过但没排格子"的预约填进**它活动日那天**的空格子（不跨天硬塞）
+python main.py --operator 10006 schedule fill --week 2026-10-05
+
+# 手工排人 / 取出来
+python main.py --operator 10006 schedule assign --id 1 --slot 2
+python main.py --operator 10006 schedule unassign --id 1
+
+# 临时改时间 / 加一格 / 停用（改日期或停用会让原来的人变成"待重排"并收到通知）
+python main.py --operator 10006 schedule update --id 2 --date 2026-10-08 --start 13:00 --end 14:00
+python main.py --operator 10006 schedule add --date 2026-10-07 --start 17:40 --end 18:20 --capacity 1
+python main.py --operator 10006 schedule close --id 2 --note "场地被学校占用"
+python main.py --operator 10006 schedule open --id 2
+```
+
+- 一键填充**只填当天**：那天没格子 / 停用 / 排满了，就留在页面的"已通过但还没排格子"列表里等人工处理
+  （跨天硬塞会让人白跑一趟）；要排到别的日子用 `assign` 手工指定。
+- 手工排人会校验：格子是否停用、是否同一周、**容量**（`已排满` 会拦下）、**同一天同一人只能一条**。
+- 改日期或停用某一格 → 那一格上的人变成 `reschedule`（待重排）并收到站内通知，
+  运营在「预约」页的"待重排"区重新通过审核后就能再排进新格子。
+- Web 端在导航「排班」页操作（社员只看得到、点不到操作按钮）。
 
 ## 自助注册（填资料 → 人事审核）
 
@@ -250,9 +281,9 @@ clubmgr/
 │   ├─ cli.py                  # 命令行（含 doctor / backup / report export）
 │   ├─ reports.py              # 公示报表渲染（Markdown / CSV）
 │   ├─ app.py                  # Flask 应用工厂
-│   ├─ views/                  # 12 个蓝图（认证/首页/社员/打印/耗材/额度/经费/预约/通知/打印机/账号/维护）
+│   ├─ views/                  # 13 个蓝图（认证/首页/社员/打印/耗材/额度/经费/预约/排班/通知/打印机/账号/维护）
 │   └─ templates/              # Jinja 模板
-├─ tests/                      # pytest 测试（175 个用例）
+├─ tests/                      # pytest 测试（195 个用例）
 ├─ .github/workflows/tests.yml # CI：push / PR 自动跑测试
 └─ docs/                       # 设计文档与路线图
 ```
@@ -275,7 +306,7 @@ clubmgr/
 `view_funds`（经费余额与流水）。旧数据里的 `vice_president` 会被当作副社长1号
 （`Role.parse` 兼容）。
 
-## 数据模型（12 张表）
+## 数据模型（13 张表）
 
 | 表 | 语义 |
 | --- | --- |
@@ -285,12 +316,13 @@ clubmgr/
 | `filaments` | 耗材目录 |
 | `inventory_transactions` | 库存流水 |
 | `fund_transactions` | 经费流水 |
-| `reservations` | 预约（`week_start` / `activity_day` / `order_no` / `status`（含"待重排"）/ 审核人 / 紧急留痕） |
+| `reservations` | 预约（`week_start` / `activity_day` / `order_no` / `status`（含"待重排"）/ 审核人 / 紧急留痕 / `slot_id` 排进哪个时间格） |
 | `contributions` | 贡献 / 捐款与额度奖励 |
 | `users` | 登录账号（关联社员，口令 pbkdf2 哈希） |
 | `settings` | 全局配置（键值对，目前放低库存阈值） |
 | `notifications` | 站内通知（`member_id` 是收件人，`ref` 指向关联对象） |
 | `printers` | 打印机（状态 空闲 / 使用中 / 维修中，使用中记 `used_by` 与 `expected_end`） |
+| `schedule_slots` | 时间格（真实日期 + 起止时间 + 容量 + 是否停用；容量 0 = 按当时可用打印机台数） |
 
 ## 设计约定
 
