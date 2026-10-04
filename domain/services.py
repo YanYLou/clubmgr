@@ -187,6 +187,18 @@ class MemberService(_Service):
             raise PermissionError(f"角色 {operator.role.value} 不能查看其他社员的信息")
         return self._member(member_id)
 
+    def find_by_token(self, token: str) -> Member | None:
+        """按 id / 学号 / 姓名解析社员（CLI 定位操作人用，见 interfaces/cli.py）。"""
+        token = (token or "").strip()
+        if not token:
+            return None
+        if token.isdigit():
+            found = self.member_repo._get(int(token))
+            if found is not None:
+                return found
+        return (self.member_repo.find_by_student_id(token)
+                or self.member_repo.find_by_student_name(token))
+
     def list_members(self, operator_id: int, *, status: str | None = None,
                      role: Role | str | None = None) -> list[Member]:
         self._operator(operator_id, "view_all")

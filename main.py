@@ -87,3 +87,10 @@ def open_services(db_path: str | Path | None = None) -> tuple[Database, Services
     """便捷入口：打开（必要时自动创建）数据库并装配服务。"""
     db = Database(db_path or DB_PATH)
     return db, build_services(db)
+
+
+if __name__ == "__main__":
+    # 阶段 2.1：命令行入口，见 interfaces/cli.py
+    from interfaces.cli import main as cli_main
+
+    raise SystemExit(cli_main())
