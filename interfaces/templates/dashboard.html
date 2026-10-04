@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}首页{% endblock %}
+{% block body %}
+<div class="card">
+  <h2>{{ g.member.name }} 的额度</h2>
+  <p class="num {{ 'neg' if statement.balance < 0 else '' }}">
+    {{ statement.balance|num }} 克
+  </p>
+  {% if statement.balance < 0 %}
+    <p class="muted">额度已透支：请尽快用缴款或贡献奖励补上（只有社长 / 副社长能记透支）。</p>
+  {% endif %}
+  <p class="muted">
+    本学期共 {{ statement.records|length }} 条打印记录，累计消耗
+    {{ statement.records|sum(attribute='consumption')|num }} 克。
+    <a href="{{ url_for('dashboard.statement') }}">查看完整额度单 →</a>
+  </p>
+</div>
+
+{% if club %}
+<div class="grid">
+  <div class="card">
+    <h3>全社额度（{{ club.members|length }} 人在社）</h3>
+    <table>
+      <tr><th>姓名</th><th>学号</th><th>剩余(克)</th></tr>
+      {% for member, balance in club.quota %}
+        <tr>
+          <td>{{ member.name }}</td>
+          <td>{{ member.student_id or '-' }}</td>
+          <td class="{{ 'neg' if balance < 0 else '' }}">{{ balance|num }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="3" class="muted">暂无数据</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>耗材库存</h3>
+    <table>
+      <tr><th>耗材</th><th>库存(克)</th></tr>
+      {% for filament, stock in club.stock %}
+        <tr>
+          <td>{{ filament.name }}</td>
+          <td class="{{ 'neg' if stock < 0 else '' }}">{{ stock|num }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="2" class="muted">还没有登记耗材</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  {% if club.fund_balance is defined %}
+  <div class="card">
+    <h3>经费余额</h3>
+    <p class="num {{ 'neg' if club.fund_balance < 0 else '' }}">{{ club.fund_balance|num }} 元</p>
+    <p class="muted"><a href="{{ url_for('fund.index') }}">查看流水 →</a></p>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

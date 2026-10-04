@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}额度{% endblock %}
+{% block body %}
+<div class="card">
+  <h2>全社额度表（在社社员）</h2>
+  <table>
+    <tr><th>id</th><th>姓名</th><th>学号</th><th>剩余额度(克)</th></tr>
+    {% for member, balance in quota %}
+      <tr>
+        <td>{{ member.id }}</td>
+        <td>{{ member.name }}</td>
+        <td>{{ member.student_id or '-' }}</td>
+        <td class="{{ 'neg' if balance < 0 else '' }}">{{ balance|num }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">还没有在社社员</td></tr>
+    {% endfor %}
+  </table>
+  <p class="muted">余额为负 = 透支（只有社长 / 副社长能记透支）。额度只通过流水增减，不直接改余额。</p>
+</div>
+
+{% if can('adjust_quota') %}
+<div class="grid">
+  <div class="card">
+    <h3>学期初发放</h3>
+    <form method="post" action="{{ url_for('quota.init') }}" class="inline">
+      <label>每人额度(克)<input name="amount" type="number" step="1" value="200" required></label>
+      <label>日期<input name="date" placeholder="留空=今天"></label>
+      <label>备注<input name="note"></label>
+      <label style="flex-direction:row;align-items:center;gap:.3rem">
+        <input type="checkbox" name="allow_repeat" value="1"> 已发过也再发
+      </label>
+      <button>发放给全体在社社员</button>
+    </form>
+    <p class="muted">默认会拦住已经发过学期额度的人，避免重复发放。</p>
+  </div>
+
+  <div class="card">
+    <h3>手工调整单人额度</h3>
+    <form method="post" action="{{ url_for('quota.adjust') }}" class="inline">
+      <label>社员（学号 / 姓名 / id）<input name="member" required></label>
+      <label>变化(克，负数=扣)<input name="amount" type="number" step="0.1" required></label>
+      <label>原因（必填）<input name="note" required></label>
+      <label>日期<input name="date" placeholder="留空=今天"></label>
+      <button>调整</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

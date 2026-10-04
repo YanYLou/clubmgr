@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}我的额度单{% endblock %}
+{% block body %}
+<div class="card">
+  <h2>{{ statement.member.name }} 的额度单</h2>
+  <p class="num {{ 'neg' if statement.balance < 0 else '' }}">{{ statement.balance|num }} 克</p>
+  <p class="muted">
+    学号 {{ statement.member.student_id or '-' }} ·
+    角色 {{ statement.member.role.value }} ·
+    状态 {{ statement.member.status }}
+  </p>
+</div>
+
+<div class="card">
+  <h3>额度流水</h3>
+  <table>
+    <tr><th>日期</th><th>类型</th><th>变化(克)</th><th>记录人</th><th>备注</th></tr>
+    {% for txn in statement.quota %}
+      <tr>
+        <td>{{ txn.date }}</td>
+        <td>{{ txn.type }}</td>
+        <td class="{{ 'neg' if txn.amount < 0 else '' }}">{{ txn.amount|num }}</td>
+        <td>{{ txn.operator_id }}</td>
+        <td>{{ txn.note or '-' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">还没有额度流水</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h3>打印记录</h3>
+  <table>
+    <tr><th>#</th><th>日期</th><th>耗材</th><th>克数</th><th>打印机</th><th>备注</th></tr>
+    {% for record in statement.records %}
+      <tr>
+        <td>{{ record.id }}</td>
+        <td>{{ record.date }}</td>
+        <td>{{ record.filament_name }}</td>
+        <td>{{ record.consumption|num }}</td>
+        <td>{{ record.printer_name or '-' }}</td>
+        <td>{{ record.comments or '-' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">还没有打印记录</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if statement.contributions %}
+<div class="card">
+  <h3>贡献记录</h3>
+  <table>
+    <tr><th>日期</th><th>类型</th><th>金额</th><th>实物</th><th>奖励额度(克)</th><th>备注</th></tr>
+    {% for item in statement.contributions %}
+      <tr>
+        <td>{{ item.date }}</td>
+        <td>{{ item.type }}</td>
+        <td>{{ item.amount|num }}</td>
+        <td>{{ item.material_desc or '-' }}</td>
+        <td>{{ item.reward_quota|num }}</td>
+        <td>{{ item.note or '-' }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

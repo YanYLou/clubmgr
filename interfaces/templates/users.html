@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}账号{% endblock %}
+{% block body %}
+<div class="card">
+  <h2>登录账号</h2>
+  <p class="muted">账号只用来证明"你是哪个社员"，权限仍然取自该社员的角色。</p>
+  <table>
+    <tr><th>id</th><th>账号</th><th>关联社员</th><th>状态</th><th>备注</th><th>操作</th></tr>
+    {% for user in users %}
+      <tr>
+        <td>{{ user.id }}</td>
+        <td>{{ user.username }}</td>
+        <td>{{ user.member_id }}</td>
+        <td>{{ user.status }}</td>
+        <td>{{ user.note or '-' }}</td>
+        <td>
+          <form method="post" action="{{ url_for('users.set_password', user_id=user.id) }}"
+                class="inline">
+            <input name="password" type="password" placeholder="新口令" required>
+            <button class="ghost">重置口令</button>
+          </form>
+          {% if user.status == 'active' %}
+          <form method="post" action="{{ url_for('users.disable', user_id=user.id) }}"
+                class="inline" onsubmit="return confirm('确认停用账号 {{ user.username }}？')">
+            <button class="ghost">停用</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">还没有账号 —— 请在下面创建第一个</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h3>创建账号</h3>
+  <form method="post" action="{{ url_for('users.add') }}" class="inline">
+    <label>账号<input name="username" required minlength="3"></label>
+    <label>口令（至少 6 位）<input name="password" type="password" required minlength="6"></label>
+    <label>关联社员
+      <select name="member_id">
+        {% for member in members %}
+          <option value="{{ member.id }}">{{ member.name }}（{{ member.role.value }}）</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>备注<input name="note"></label>
+    <button>创建</button>
+  </form>
+</div>
+{% endblock %}

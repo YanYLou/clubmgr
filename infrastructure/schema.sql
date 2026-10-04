@@ -1,4 +1,7 @@
 
+-- 建表脚本，只在空库上执行（见 infrastructure/db.py 的 _init_schema）。
+-- 结构版本：3 —— 与 db.py 的 SCHEMA_VERSION 保持一致；改动本文件必须同步 +1。
+
 CREATE TABLE members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -27,16 +30,16 @@ CREATE TABLE records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     member_id INTEGER NOT NULL,
     printer_name TEXT NOT NULL,
+    filament_id INTEGER NOT NULL,
     filament_name TEXT NOT NULL,
     consumption REAL NOT NULL,
     date TEXT NOT NULL,
     operator_id INTEGER NOT NULL,
-    is_charged INTEGER NOT NULL DEFAULT 0,
-    fee REAL NOT NULL DEFAULT 0,
     reservation_id INTEGER,
     comments TEXT,
     FOREIGN KEY (member_id) REFERENCES members(id),
-    FOREIGN KEY (operator_id) REFERENCES members(id)
+    FOREIGN KEY (operator_id) REFERENCES members(id),
+    FOREIGN KEY (filament_id) REFERENCES filaments(id)
 );
 
 CREATE TABLE filaments (
@@ -97,3 +100,24 @@ CREATE TABLE contributions (
     FOREIGN KEY (member_id) REFERENCES members(id),
     FOREIGN KEY (operator_id) REFERENCES members(id)
 );
+
+-- 登录账号（阶段 2.2 新增）：权限取自关联社员的 role
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    member_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    note TEXT,
+    FOREIGN KEY (member_id) REFERENCES members(id)
+);
+
+-- 索引（阶段 1 新增）：额度 / 库存 / 经费余额都是 SUM 聚合，按维度建索引
+CREATE INDEX ix_records_member       ON records(member_id);
+CREATE INDEX ix_records_date         ON records(date);
+CREATE INDEX ix_records_filament     ON records(filament_id);
+CREATE INDEX ix_quota_member         ON quota_transactions(member_id);
+CREATE INDEX ix_inventory_filament   ON inventory_transactions(filament_id);
+CREATE INDEX ix_fund_date            ON fund_transactions(date);
+CREATE INDEX ix_contributions_member ON contributions(member_id);
+CREATE INDEX ix_reservations_week    ON reservations(week_start, activity_day);

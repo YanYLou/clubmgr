@@ -2,492 +2,185 @@
 
 ![Static Badge](https://img.shields.io/badge/Status-In_development-blue)
 
-
 > We take no responsibilities for any crashes.
 
-## New Suggestions from DeepSeek
+造梦 3D 打印社团的运营管理工具：用 SQLite 记账，管理**社员、打印记录、额度、耗材库存、经费**，
+另规划了预约排期与贡献奖励。定位是单机 / 局域网内部工具，不是多租户 Web 服务。
 
-> *Reference purpose only*
+## 项目状态
 
-你这版新结构比之前好，**分层方向是对的**：`domain` 放模型和业务，`infrastructure` 放数据库，`interfaces` 放接口，`main.py` 组装。  
-但目前还只是骨架，而且有几个关键问题：`Operator` 概念混乱、`Record.op_id` 指代不清、仓储抽象方法没实现、`db.py` 里 `row_factory` 写错、每个 Repo 各自连接不利于事务。下面我按你的新结构重新给一版规划。
+标记说明：✅ 已实现并有测试 · 🟡 部分实现 · ❌ 尚未实现。
 
----
+| 模块 | 状态 | 说明 |
+| --- | --- | --- |
+| 领域模型 `domain/models.py` | ✅ | 8 个 dataclass + `Role` 枚举；`records` 用 `filament_id` 外键（结构版本 2） |
+| 建表 `infrastructure/schema.sql` | ✅ | 8 张表 + 8 个索引；额度 / 库存 / 经费全部走流水 |
+| 连接与事务 `infrastructure/db.py` | ✅ | 自动建目录、WAL、可嵌套事务（SAVEPOINT）、`close()` 守卫、结构版本校验 |
+| 泛型仓储 `SQLite3Repository` | ✅ | 反射 dataclass 字段生成 CRUD；读回时按类型注解还原 `Role` / `date` / `bool` |
+| 具体仓储（7 个） | ✅ | `infrastructure/repositories.py`：社员 / 打印 / 额度 / 耗材 / 库存 / 经费 / 贡献 |
+| 权限矩阵 `domain/permissions.py` | ✅ | 11 个动作，含"额度不足只有社长/副社长能记" |
+| 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印（三表同事务）/ 耗材 / 经费 / 贡献 / 报表 |
+| 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 |
+| Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 社员 / 打印 / 耗材 / 额度 / 经费 / 账号页面 |
+| 登录与账号（`users` 表） | ✅ | pbkdf2 口令哈希 + 会话登录；账号权限仍取自关联社员的角色 |
+| 装配 `main.py` | ✅ | `build_repositories` / `build_services` / `open_services` + CLI / Web 入口 |
+| 测试 | ✅ | 83 个用例：数据层、仓储、权限、服务、CLI、Web |
+| 预约排期 `reservations` | ❌ | 表已建好，仓储与服务未写（等"一人一天能约几件"定下来） |
 
-## 一、先修正分层：接口应该放 domain，实现放 infrastructure
+一句话：**额度、打印、库存、经费的闭环已经能用命令行完整操作；Web 界面与预约排期还没做。**
+进度与后续计划见 [`docs/roadmap.md`](docs/roadmap.md)。
 
-建议改成：
+## 快速开始
+
+```powershell
+# 0. 建议先建虚拟环境
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# 1. 安装依赖
+pip install -r requirements.txt
+
+# 2. 跑测试
+python -m pytest -q
+
+# 3. 初始化数据库并创建第一个社长（首次运行会自动创建 data/club.db）
+python main.py member bootstrap --name 社长 --student-id 10001
+
+# 4. 建一个登录账号（Web 界面需要；本地测试账号就用 admin / admin123）
+python main.py --operator 10001 user add --username admin --password admin123 --member 10001
+
+# 5. 启动 Web 界面，浏览器打开 http://127.0.0.1:5000/ 用上面的账号登录
+python main.py web
+```
+
+## Web 界面
+
+```powershell
+python main.py web                      # 默认 127.0.0.1:5000
+python main.py web --host 0.0.0.0 --port 8080   # 让同社团的人在内网访问
+flask --app interfaces.app:create_app run --debug   # 等价写法（开发模式）
+```
+
+页面：首页概览（自己的额度 + 社长视角的全社额度 / 库存 / 经费）、我的额度单、
+社员名册与增改退社、打印记录与「记打印」、耗材与库存、额度发放与调整、经费流水与贡献、账号管理。
+
+要点：
+
+- **必须先建账号**：`user add`（见上面第 4 步）或让社长在「账号」页面创建；
+  账号只是"证明你是哪个社员"，权限仍然取自该社员的角色。
+- 会话密钥优先读环境变量 `CLUBMGR_SECRET_KEY`，没有就在 `data/secret_key` 里生成一个并复用。
+- 服务是 Flask 开发服务器，只适合社团内网 / 本机使用；页面写入全部走服务层，
+  权限、事务、额度规则与 CLI 完全一致。
+
+## 命令行用法
+
+`--operator` 指定操作人，可以用 **id / 学号 / 姓名**；权限判断在服务层，越权会报错并返回退出码 1。
+加 `--json`（放在子命令之前）可输出机器可读结果。
+
+```powershell
+# 社员
+python main.py --operator 10001 member add --name 张三 --student-id 10005
+python main.py --operator 10001 member list
+python main.py --operator 10001 member left --member 10005
+
+# 耗材与库存
+python main.py --operator 10001 filament add --name "PLA 白" --material PLA --unit-price 0.12
+python main.py --operator 10001 filament purchase --filament "PLA 白" --grams 1000 --cost 150 --note "采购 1kg"
+python main.py --operator 10001 filament stock
+
+# 额度
+python main.py --operator 10001 quota init --amount 200          # 学期初发给全体在社社员
+python main.py --operator 10001 quota adjust --member 张三 --amount -30 --note "上学期欠额度"
+python main.py --operator 10005 quota balance                    # 查自己
+
+# 记录打印（额度不足时只有社长 / 副社长能记）
+python main.py --operator 10002 record print --member 10005 --filament "PLA 白" --grams 42.5 --printer P1
+python main.py --operator 10005 report statement                 # 个人额度单
+
+# 经费与贡献
+python main.py --operator 10001 fund income --amount 500 --note "会费收入"
+python main.py --operator 10001 fund list
+python main.py --operator 10001 contribution add --member 10005 --amount 100 --reward-quota 50 --note "捐赠耗材费"
+
+# 报表
+python main.py --operator 10001 report quota
+python main.py --operator 10001 report stock
+python main.py --operator 10001 report fund
+```
+
+数据库文件固定为 `data/club.db`（见 `main.py` 的 `DB_PATH`），已被 `.gitignore` 忽略，请勿提交。
+
+## 目录结构
 
 ```text
-E:\CLUBMGR
-│  main.py
-│  LICENSE
-├─data
-│      club.db
-├─domain
-│      models.py          # 数据类 + 枚举
-│      repositories.py    # 仓储抽象接口 ABC
-│      permissions.py     # 角色权限矩阵
-│      services.py        # 业务逻辑
-├─infrastructure
-│      db.py              # Database、建表、事务
-│      repositories.py    # SQLite 具体实现
-└─interfaces
-       api.py             # 给 CLI/GUI 调用的薄接口
+clubmgr/
+├─ main.py                     # 路径常量 + 服务装配 + CLI 入口
+├─ requirements.txt  pytest.ini  .gitattributes
+├─ domain/                     # 领域层：不依赖 SQLite
+│   ├─ models.py               # dataclass 与枚举
+│   ├─ repositories.py         # 仓储抽象接口 + 事务边界（端口）
+│   ├─ permissions.py          # 角色权限矩阵
+│   ├─ security.py             # 口令哈希（pbkdf2）
+│   └─ services.py             # 业务逻辑与事务边界
+├─ infrastructure/             # 基础设施层
+│   ├─ db.py                   # 连接、PRAGMA、建表、可嵌套事务、结构版本
+│   ├─ repositories.py         # 泛型 SQLite 仓储 + 8 个具体仓储 + 类型还原
+│   └─ schema.sql              # 建表语句与索引
+├─ interfaces/                 # 接口层
+│   ├─ cli.py                  # 命令行
+│   ├─ app.py                  # Flask 应用工厂
+│   ├─ views/                  # 8 个蓝图（auth/dashboard/members/records/filaments/quota/fund/users）
+│   └─ templates/              # Jinja 模板
+├─ tests/                      # pytest 测试（83 个用例）
+└─ docs/                       # 设计文档与路线图
 ```
 
-关键原则：
+## 角色与权限
 
-- `domain/services.py` 只依赖 `domain/repositories.py` 的抽象接口，不依赖 SQLite。
-- `infrastructure/repositories.py` 实现抽象接口。
-- `interfaces/api.py` 不写 SQL，只调用 service。
-- `main.py` 负责组装：创建 `Database`、创建具体 Repo、注入 Service。
-
-你现在的 `infrastructure/repositories.py` 里同时放 ABC 接口，会让 `domain` 反向依赖 `infrastructure`，建议把 ABC 移到 `domain/repositories.py`。
-
----
-
-## 二、领域模型要重做：不要用 Operator 混指社员和操作员
-
-你现在的：
-
-```python
-@dataclass
-class Operator:
-    id: int
-    op_name: str
-```
-
-但表里又有 `quota`，说明它其实是“社员”。  
-`Record.op_id` 也容易混淆：它到底是“打印的社员”，还是“记录的操作员”？
-
-建议明确：
-
-- `Member`：社员，有额度、角色、状态。
-- `Record.member_id`：谁打印的。
-- `Record.operator_id`：谁记录的。
-- 管理员也是 `Member`，只是 `role` 不同。
-
-`domain/models.py` 建议这样：
-
-```python
-from dataclasses import dataclass, field
-from datetime import date
-from enum import Enum
-from typing import Optional
-
-class Role(str, Enum):
-    PRESIDENT = "president"
-    VICE_PRESIDENT = "vice_president"
-    OP1 = "op1"
-    OP2 = "op2"
-    HR = "hr"
-    MEMBER = "member"
-
-@dataclass
-class Member:
-    id: Optional[int] = None
-    name: str = ""
-    qq: Optional[str] = None
-    student_id: Optional[str] = None
-    role: Role = Role.MEMBER
-    status: str = "active"      # active / left
-    join_date: Optional[date] = None
-    note: Optional[str] = None
-
-@dataclass
-class Record:
-    id: Optional[int] = None
-    member_id: int = 0          # 打印的社员
-    printer_name: str = ""
-    filament_name: str = ""
-    consumption: float = 0.0
-    date: date = field(default_factory=date.today)
-    operator_id: int = 0        # 记录人，运营2
-    is_charged: bool = False
-    fee: float = 0.0
-    reservation_id: Optional[int] = None
-    comments: Optional[str] = None
-```
-
-额度不要直接放 `Member` 里改余额，要用流水算。
-
----
-
-## 三、数据库表重新规划
-
-核心表至少这些：
-
-### 1. `members` 社员表
-
-```sql
-CREATE TABLE members (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    qq TEXT,
-    student_id TEXT UNIQUE,
-    role TEXT NOT NULL DEFAULT 'member',
-    status TEXT NOT NULL DEFAULT 'active',
-    join_date TEXT,
-    note TEXT
-);
-```
-
-### 2. `quota_transactions` 额度流水
-
-```sql
-CREATE TABLE quota_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    member_id INTEGER NOT NULL,
-    amount REAL NOT NULL,          -- 正数增加，负数消耗
-    type TEXT NOT NULL,            -- init/print/contribution_reward/manual_adjust
-    related_record_id INTEGER,
-    operator_id INTEGER NOT NULL,
-    date TEXT NOT NULL,
-    note TEXT,
-    FOREIGN KEY (member_id) REFERENCES members(id),
-    FOREIGN KEY (operator_id) REFERENCES members(id)
-);
-```
-
-剩余额度 = `SUM(amount)`。  
-学期初每人写一条 `+200`，打印写 `-消耗`，贡献奖励写 `+奖励`。
-
-### 3. `records` 打印记录
-
-```sql
-CREATE TABLE records (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    member_id INTEGER NOT NULL,
-    printer_name TEXT NOT NULL,
-    filament_name TEXT NOT NULL,
-    consumption REAL NOT NULL,
-    date TEXT NOT NULL,
-    operator_id INTEGER NOT NULL,
-    is_charged INTEGER NOT NULL DEFAULT 0,
-    fee REAL NOT NULL DEFAULT 0,
-    reservation_id INTEGER,
-    comments TEXT,
-    FOREIGN KEY (member_id) REFERENCES members(id),
-    FOREIGN KEY (operator_id) REFERENCES members(id)
-);
-```
-
-### 4. `filaments` 耗材表
-
-```sql
-CREATE TABLE filaments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    material TEXT,
-    color TEXT,
-    unit_price REAL,
-    note TEXT
-);
-```
-
-### 5. `inventory_transactions` 库存流水
-
-```sql
-CREATE TABLE inventory_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    filament_id INTEGER NOT NULL,
-    amount REAL NOT NULL,          -- 正数入库，负数出库
-    type TEXT NOT NULL,            -- purchase/print/adjust
-    related_record_id INTEGER,
-    operator_id INTEGER NOT NULL,
-    date TEXT NOT NULL,
-    note TEXT,
-    FOREIGN KEY (filament_id) REFERENCES filaments(id),
-    FOREIGN KEY (operator_id) REFERENCES members(id)
-);
-```
-
-### 6. `fund_transactions` 经费流水
-
-```sql
-CREATE TABLE fund_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    amount REAL NOT NULL,          -- 正数收入，负数支出
-    type TEXT NOT NULL,            -- income/expense
-    date TEXT NOT NULL,
-    operator_id INTEGER NOT NULL,
-    note TEXT,
-    FOREIGN KEY (operator_id) REFERENCES members(id)
-);
-```
-
-### 7. `reservations` 预约安排
-
-```sql
-CREATE TABLE reservations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    member_id INTEGER NOT NULL,
-    week_start TEXT NOT NULL,
-    activity_day TEXT NOT NULL,    -- mon/wed/fri
-    order_no INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    operator_id INTEGER NOT NULL,
-    note TEXT,
-    FOREIGN KEY (member_id) REFERENCES members(id),
-    FOREIGN KEY (operator_id) REFERENCES members(id)
-);
-```
-
-### 8. `contributions` 贡献/捐款
-
-```sql
-CREATE TABLE contributions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    member_id INTEGER NOT NULL,
-    amount REAL NOT NULL,
-    type TEXT NOT NULL,            -- money/material
-    material_desc TEXT,
-    reward_quota REAL NOT NULL DEFAULT 0,
-    date TEXT NOT NULL,
-    operator_id INTEGER NOT NULL,
-    note TEXT,
-    FOREIGN KEY (member_id) REFERENCES members(id),
-    FOREIGN KEY (operator_id) REFERENCES members(id)
-);
-```
-
----
-
-## 四、你当前代码的具体问题
-
-### 1. `SQLiteOpRepo` 无法实例化
-
-`OperatorRepository` 有抽象方法：
-
-```python
-create / get / delete / list
-```
-
-但 `SQLiteOpRepo` 一个都没实现。Python 会报：
-
-```text
-TypeError: Can't instantiate abstract class SQLiteOpRepo with abstract methods ...
-```
-
-`SQLiteRecordRepo` 同理。
-
-### 2. `row_factory` 写错
-
-你写的是：
-
-```python
-self.row_factory = sqlite3.Row
-```
-
-应该是：
-
-```python
-self.conn.row_factory = sqlite3.Row
-```
-
-### 3. 每个 Repo 各自 `sqlite3.connect`
-
-这样多个 Repo 各自连接，事务很难统一。  
-打印一次要同时写：
-
-- `records`
-- `quota_transactions`
-- `inventory_transactions`
-
-如果三个 Repo 各自提交，中途失败就会数据不一致。
-
-建议 `infrastructure/db.py` 提供统一 `Database`：
-
-```python
-import sqlite3
-from contextlib import contextmanager
-
-class Database:
-    def __init__(self, db_path: str):
-        self.conn = sqlite3.connect(db_path)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA foreign_keys = ON")
-        self._init_schema()
-
-    def _init_schema(self):
-        # 建表 SQL 放这里
-        self.conn.commit()
-
-    @contextmanager
-    def transaction(self):
-        try:
-            yield self.conn
-            self.conn.commit()
-        except Exception:
-            self.conn.rollback()
-            raise
-```
-
-Repo 不要自己 `connect`，而是接收 `Database`。
-
-### 4. `Operator` 和 `ops` 表命名要改
-
-建议：
-
-- `Operator` → `Member`
-- `ops` 表 → `members`
-- `Record.op_id` → `Record.member_id`
-- 新增 `Record.operator_id`
-
----
-
-## 五、权限设计
-
-角色：
-
-| 角色 | 说明 |
+| 角色 | 职责 |
 | --- | --- |
-| president | 社长，全部权限 |
-| vice_president | 副社长，全部权限 |
-| op1 | 运营1，预约安排 |
-| op2 | 运营2，打印记录、资源统计 |
-| hr | 人事，成员管理 |
-| member | 普通社员，只看自己 |
+| `president` / `vice_president` | 全部权限：经费、额度调整、耗材采购、**记透支** |
+| `op1` | 预约安排（阶段 2.3 使用） |
+| `op2` | 打印记录、查看库存 |
+| `hr` | 成员增改、退社 |
+| `member` | 只看自己的额度与记录 |
 
-权限矩阵：
+权限判断放在服务层（`domain/permissions.py` + `domain/services.py`），接口层不重复判断
+（Web 页面只用 `can()` 隐藏入口，CLI 完全不判断）。除了上表的职责，还有几个细分的读权限：
+`view_members`（人事看名册）、`view_records`（运营2 看打印记录做统计）、
+`view_inventory`（运营2 选耗材）、`view_funds`（经费只给社长 / 副社长）、
+`manage_users`（登录账号管理）。
 
-| 功能 | 社长/副社长 | 运营1 | 运营2 | 人事 | 普通社员 |
-| --- | --- | --- | --- | --- | --- |
-| 查看所有数据 | ✅ | ❌ | ❌ | ❌ | ❌ |
-| 成员增改/退社 | ✅ | ❌ | ❌ | ✅ | ❌ |
-| 预约安排 | ✅ | ✅ | ❌ | ❌ | ❌ |
-| 打印记录 | ✅ | ❌ | ✅ | ❌ | ❌ |
-| 耗材入库/采购 | ✅ | ❌ | ❌ | ❌ | ❌ |
-| 打印出库记录 | ✅ | ❌ | ✅ | ❌ | ❌ |
-| 经费管理 | ✅ | ❌ | ❌ | ❌ | ❌ |
-| 额度调整 | ✅ | ❌ | ❌ | ❌ | ❌ |
-| 查看自己额度 | ✅ | ✅ | ✅ | ✅ | ✅ |
+## 数据模型（8 张表）
 
-实现上不要只在 `api.py` 判断，要在 `services.py` 判断：
+| 表 | 语义 |
+| --- | --- |
+| `members` | 社员（管理员也是社员，靠 `role` 区分） |
+| `records` | 一条 = 一次打印（`member_id` 打印者、`operator_id` 记录人、`filament_id` 外键 + `filament_name` 快照） |
+| `quota_transactions` | 额度流水（`SUM(amount)` = 剩余额度） |
+| `filaments` | 耗材目录 |
+| `inventory_transactions` | 库存流水 |
+| `fund_transactions` | 经费流水 |
+| `reservations` | 活动日排期（周一 / 周三 / 周五，待实现） |
+| `contributions` | 贡献 / 捐款与额度奖励 |
 
-```python
-def can_edit_members(role: Role) -> bool:
-    return role in (Role.PRESIDENT, Role.VICE_PRESIDENT, Role.HR)
+## 设计约定
 
-def can_write_record(role: Role) -> bool:
-    return role in (Role.PRESIDENT, Role.VICE_PRESIDENT, Role.OP2)
-```
+- **一切走流水**：额度、库存、经费余额都由 `SUM(amount)` 实时算出，不存余额字段，不允许直接改余额。
+- **事务边界在服务层**：仓储只执行 SQL、不提交；一次业务操作（记录打印要同时写 `records`、
+  `quota_transactions`、`inventory_transactions`）必须包在 `with db.transaction():` 里，事务可嵌套。
+- **额度不足允许透支，但只有社长 / 副社长能记**（`allow_overdraft`）：现场不阻塞打印，
+  欠的额度事后用缴款 / 贡献奖励补上；报表里余额为负即为透支。
+- **打印记录不记钱**：`records` 没有 `fee` / `is_charged`（收费规则未定，先不猜），
+  与钱有关的内容只走 `fund_transactions` 与 `contributions`。
+- **类型还原**：写库用 `date` / `Role`，读回时由 `SQLite3Repository._from_row` 按字段类型注解还原。
+- **结构版本**：改 `schema.sql` 必须同时把 `infrastructure/db.py` 的 `SCHEMA_VERSION` 加 1；
+  打开旧版本的库会直接报错并提示重建（开发阶段没有迁移脚本）。
+- **账号与权限分离**：`users` 表只回答"你是哪个社员"，所有权限都按该社员的 `role` 判断；
+  口令用 pbkdf2 + 每人随机盐存储（`domain/security.py`），会话里只放账号 id。
 
----
+## 文档
 
-## 六、业务逻辑应该放在 services.py
-
-例如 `RecordService.record_print`：
-
-```python
-def record_print(self, operator_id, member_id, printer_name, filament_name, consumption, date):
-    operator = self.member_repo.get(operator_id)
-    if not can_write_record(operator.role):
-        raise PermissionError("无权限记录打印")
-
-    with self.db.transaction():
-        record = Record(
-            member_id=member_id,
-            printer_name=printer_name,
-            filament_name=filament_name,
-            consumption=consumption,
-            date=date,
-            operator_id=operator_id,
-        )
-        record = self.record_repo.create(record)
-
-        self.quota_repo.add(
-            member_id=member_id,
-            amount=-consumption,
-            type="print",
-            related_record_id=record.id,
-            operator_id=operator_id,
-            date=date,
-        )
-
-        self.inventory_repo.add_by_filament_name(
-            filament_name=filament_name,
-            amount=-consumption,
-            type="print",
-            related_record_id=record.id,
-            operator_id=operator_id,
-            date=date,
-        )
-    return record
-```
-
-买耗材时：
-
-```python
-def purchase_filament(self, operator_id, filament_id, amount, total_cost, date, note):
-    # 1. funds 写支出：-total_cost
-    # 2. inventory_transactions 写入库：+amount
-```
-
-贡献奖励时：
-
-```python
-def add_contribution(self, operator_id, member_id, amount, reward_quota, date, note):
-    # 1. contributions 写一条
-    # 2. quota_transactions 写 +reward_quota
-```
-
----
-
-## 七、日常运营管理建议
-
-1. **群预约和数据库分开**  
-   群里说“我要预约”只是来源，运营1最终录入 `reservations`。不要让群消息直接当数据。
-
-2. **运营1只管安排，运营2只管记录**  
-   互相核对，避免一个人既安排又记录。
-
-3. **额度、库存、经费全部走流水**  
-   不允许直接改余额。任何调整都写流水，备注原因和操作人。
-
-4. **每周固定流程**
-   - 周一/周三/周五前：运营1录预约。
-   - 活动日：运营2录实际打印。
-   - 周末：社长/副社长导出额度、库存、经费。
-   - 备份 `data/club.db`。
-
-5. **每月公示**
-   - 经费余额
-   - 耗材库存
-   - 社员额度使用
-   - 贡献名单
-
-6. **退社不删除**
-   人事把 `members.status` 改成 `left`，历史记录保留。
-
-7. **特殊耗材单独建 filament**
-   比如“红色 PETG 特殊料”，库存和普通 PLA 分开。
-
-8. **先做 MVP**
-   第一版只做：
-   - members
-   - records
-   - quota_transactions
-   - filaments
-   - inventory_transactions
-   - fund_transactions
-
-   第二版再加 reservations、contributions、报表。
-
----
-
-## 八、给你的行动清单
-
-1. 把 `Operator` 改成 `Member`。
-2. `ops` 表改成 `members`，加 `role/status/student_id/qq`。
-3. `Record.op_id` 拆成 `member_id` 和 `operator_id`。
-4. 把仓储 ABC 移到 `domain/repositories.py`。
-5. `infrastructure/repositories.py` 只放 SQLite 实现。
-6. `db.py` 改成统一 `Database`，设置 `self.conn.row_factory = sqlite3.Row`。
-7. 建 `quota_transactions`、`inventory_transactions`、`fund_transactions` 三张流水表。
-8. 所有写操作走 `services.py`，并检查 `operator_id` 的权限。
-9. `interfaces/api.py` 只调用 service，不写 SQL。
-10. 每周备份 `data/club.db`。
-
-如果你愿意，我下一步可以直接按这个新结构，帮你写一版能跑的骨架代码：`domain/models.py`、`domain/repositories.py`、`domain/permissions.py`、`domain/services.py`、`infrastructure/db.py`、`infrastructure/repositories.py`、`interfaces/api.py`、`main.py`。
+- [`docs/roadmap.md`](docs/roadmap.md)：分阶段路线图、完成情况与待决策问题
+- [`docs/design-notes.md`](docs/design-notes.md)：早期设计建议原文（历史文档，部分已实现）
+- `AGENTS.md`：协作与提交规范（本地文件，未纳入版本库）

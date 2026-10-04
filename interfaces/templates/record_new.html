@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}记录打印{% endblock %}
+{% block body %}
+<div class="card" style="max-width:560px">
+  <h2>记录一次打印</h2>
+  <p class="muted">
+    一次提交会同时写三张表：打印记录、额度流水（-克数）、库存流水（-克数）；
+    额度不足时只有社长 / 副社长能记。
+  </p>
+  <form method="post" class="inline" style="flex-direction:column;align-items:stretch">
+    <label>谁打印的（学号 / 姓名 / id）<input name="member" required autofocus></label>
+    <label>耗材
+      <select name="filament_id">
+        {% for filament in filaments %}
+          <option value="{{ filament.id }}">{{ filament.name }}
+            {%- if filament.material %}（{{ filament.material }}）{% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>消耗（克）<input name="grams" type="number" step="0.1" min="0.1" required></label>
+    <label>打印机<input name="printer" placeholder="P1"></label>
+    <label>日期<input name="date" placeholder="留空=今天"></label>
+    <label>备注<input name="comments"></label>
+    <button>保存</button>
+  </form>
+  {% if not filaments %}
+    <p class="muted">还没有耗材：请先到「耗材」页面新增。</p>
+  {% endif %}
+</div>
+{% endblock %}

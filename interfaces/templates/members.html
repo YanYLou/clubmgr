@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}社员{% endblock %}
+{% block body %}
+<div class="card">
+  <h2>社员名册</h2>
+  <p>
+    <a href="{{ url_for('members.index') }}">在社 / 全部</a> ·
+    <a href="{{ url_for('members.index', status='left') }}">已退社</a>
+  </p>
+  <table>
+    <tr><th>id</th><th>姓名</th><th>学号</th><th>QQ</th><th>角色</th><th>状态</th><th>入社</th><th>操作</th></tr>
+    {% for member in members %}
+      <tr>
+        <td>{{ member.id }}</td>
+        <td>{{ member.name }}</td>
+        <td>{{ member.student_id or '-' }}</td>
+        <td>{{ member.qq or '-' }}</td>
+        <td>{{ member.role.value }}</td>
+        <td>{{ member.status }}</td>
+        <td>{{ member.join_date or '-' }}</td>
+        <td>
+          {% if can('edit_members') %}
+          <form method="post" action="{{ url_for('members.change_role', member_id=member.id) }}"
+                class="inline">
+            <select name="role">
+              {% for role in roles %}
+                <option value="{{ role }}" {% if role == member.role.value %}selected{% endif %}>{{ role }}</option>
+              {% endfor %}
+            </select>
+            <button class="ghost">改角色</button>
+          </form>
+          {% if member.status == 'active' %}
+          <form method="post" action="{{ url_for('members.mark_left', member_id=member.id) }}"
+                class="inline" onsubmit="return confirm('确认让 {{ member.name }} 退社？历史记录会保留。')">
+            <button class="ghost">退社</button>
+          </form>
+          {% endif %}
+          {% else %}-{% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="muted">没有符合条件的社员</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if can('edit_members') %}
+<div class="card">
+  <h3>新增社员</h3>
+  <form method="post" action="{{ url_for('members.add') }}" class="inline">
+    <label>姓名<input name="name" required></label>
+    <label>学号<input name="student_id"></label>
+    <label>QQ<input name="qq"></label>
+    <label>角色
+      <select name="role">
+        {% for role in roles %}<option value="{{ role }}">{{ role }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>入社日期<input name="join_date" placeholder="2026-09-01"></label>
+    <label>备注<input name="note"></label>
+    <button>新增</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}
