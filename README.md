@@ -18,7 +18,7 @@
 | 连接与事务 `infrastructure/db.py` | ✅ | 自动建目录、WAL、可嵌套事务（SAVEPOINT）、`close()` 守卫、结构版本校验 |
 | 泛型仓储 `SQLite3Repository` | ✅ | 反射 dataclass 字段生成 CRUD；读回时按类型注解还原 `Role` / `date` / `bool` |
 | 具体仓储（8 个） | ✅ | `infrastructure/repositories.py`：社员 / 打印 / 额度 / 耗材 / 库存 / 经费 / 贡献 / 账号 |
-| 权限矩阵 `domain/permissions.py` | ✅ | 13 个动作，含"额度不足只有社长/副社长能记"与账号管理 |
+| 权限矩阵 `domain/permissions.py` | ✅ | 15 个动作；副社长分 1/2 号、`teacher` 与社长同级、两位运营权限共享 |
 | 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印（三表同事务）/ 耗材 / 经费 / 贡献 / 报表 / 账号 |
 | 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 + 体检 / 备份 / 导出 |
 | Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 社员 / 打印 / 耗材 / 额度 / 经费 / 预约 / 账号 / 维护页面 |
@@ -26,7 +26,7 @@
 | 装配 `main.py` | ✅ | `build_repositories` / `build_services` / `open_services` + CLI / Web 入口 |
 | 运维工具 | ✅ | `doctor` 体检、`backup` 热备份、`report export` 公示报表（Web 维护页也可用） |
 | 预约排期 `reservations` | ✅ | 谁都能提交，社长 / 副社长 / 运维审核通过后才进排班表（结构版本 4） |
-| 测试与 CI | ✅ | 123 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表、预约；GitHub Actions 自动跑 |
+| 测试与 CI | ✅ | 127 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表、预约；GitHub Actions 自动跑 |
 
 一句话：**日常运营闭环（社员 / 打印 / 额度 / 库存 / 经费 / 预约 / 公示 / 备份）都已经可用，
 命令行与 Web 双入口。**
@@ -179,46 +179,49 @@ clubmgr/
 │   ├─ app.py                  # Flask 应用工厂
 │   ├─ views/                  # 10 个蓝图（认证/首页/社员/打印/耗材/额度/经费/预约/账号/维护）
 │   └─ templates/              # Jinja 模板
-├─ tests/                      # pytest 测试（101 个用例）
+├─ tests/                      # pytest 测试（127 个用例）
 ├─ .github/workflows/tests.yml # CI：push / PR 自动跑测试
 └─ docs/                       # 设计文档与路线图
 ```
 
 ## 角色与权限
 
-| 角色 | 职责 |
-| --- | --- |
-| `president` / `vice_president` | 全部权限：经费、额度调整、耗材采购、**记透支** |
-| `op1` | 预约安排（阶段 2.3 使用） |
-| `op2` | 打印记录、查看库存 |
-| `hr` | 成员增改、退社 |
-| `member` | 只看自己的额度与记录 |
+| 角色 | 业务权限 | 管理页 / 账号页 |
+| --- | --- | --- |
+| `president` 社长 | 全部：经费、额度调整、耗材采购、**记透支** | ✅ |
+| `vice_president_1` 副社长1号 | 全部业务权限 | ✅ |
+| `vice_president_2` 副社长2号 | 全部业务权限 | ❌ |
+| `teacher` 社团老师 | 与社长同级（含管理页） | ✅ |
+| `op1` / `op2` 两位运营 | **权限完全一致**：记打印、审核预约、排班、看库存与打印记录 | ❌ |
+| `hr` 人事 | 成员增改、退社、看名册 | ❌ |
+| `member` 普通社员 | 只看自己的额度与记录、自己提交预约 | ❌ |
 
 权限判断放在服务层（`domain/permissions.py` + `domain/services.py`），接口层不重复判断
-（Web 页面只用 `can()` 隐藏入口，CLI 完全不判断）。除了上表的职责，还有几个细分的读权限：
-`view_members`（人事看名册）、`view_records`（运营2 看打印记录做统计）、
-`view_inventory`（运营2 选耗材）、`view_funds`（经费只给社长 / 副社长）、
-`manage_users`（登录账号管理）。
+（Web 页面只用 `can()` 隐藏入口，CLI 完全不判断）。除上表外还有几个细分读权限：
+`view_members`（名册）、`view_records`（打印记录与统计）、`view_inventory`（耗材库存）、
+`view_funds`（经费余额与流水）。旧数据里的 `vice_president` 会被当作副社长1号
+（`Role.parse` 兼容）。
 
-## 数据模型（8 张表）
+## 数据模型（9 张表）
 
 | 表 | 语义 |
 | --- | --- |
-| `members` | 社员（管理员也是社员，靠 `role` 区分） |
+| `members` | 社员（管理员也是社员，靠 `role` 区分；`status`：active / left） |
 | `records` | 一条 = 一次打印（`member_id` 打印者、`operator_id` 记录人、`filament_id` 外键 + `filament_name` 快照） |
 | `quota_transactions` | 额度流水（`SUM(amount)` = 剩余额度） |
 | `filaments` | 耗材目录 |
 | `inventory_transactions` | 库存流水 |
 | `fund_transactions` | 经费流水 |
-| `reservations` | 活动日排期（周一 / 周三 / 周五，待实现） |
+| `reservations` | 预约（`week_start` / `activity_day` / `order_no` / `status` / 审核人） |
 | `contributions` | 贡献 / 捐款与额度奖励 |
+| `users` | 登录账号（关联社员，口令 pbkdf2 哈希） |
 
 ## 设计约定
 
 - **一切走流水**：额度、库存、经费余额都由 `SUM(amount)` 实时算出，不存余额字段，不允许直接改余额。
 - **事务边界在服务层**：仓储只执行 SQL、不提交；一次业务操作（记录打印要同时写 `records`、
   `quota_transactions`、`inventory_transactions`）必须包在 `with db.transaction():` 里，事务可嵌套。
-- **额度不足允许透支，但只有社长 / 副社长能记**（`allow_overdraft`）：现场不阻塞打印，
+- **额度不足允许透支，但只有社长 / 副社长 / 老师能记**（`allow_overdraft`）：现场不阻塞打印，
   欠的额度事后用缴款 / 贡献奖励补上；报表里余额为负即为透支。
 - **打印记录不记钱**：`records` 没有 `fee` / `is_charged`（收费规则未定，先不猜），
   与钱有关的内容只走 `fund_transactions` 与 `contributions`。
