@@ -12,6 +12,8 @@
 - 新增 7 个具体仓储（member / record / quota / filament / inventory / fund /
   contribution），把 ``domain/repositories.py`` 的抽象接口落地；专用查询只写在
   这一层，服务层不写 SQL。预约（reservations）仓储属于阶段 2。
+
+阶段 2.2：新增 ``SQLiteUserRepo``（登录账号）。
 """
 
 import sqlite3
@@ -30,6 +32,7 @@ from domain.models import (
     QuotaTransaction,
     Record,
     Role,
+    User,
 )
 from domain.repositories import (
     ContributionRepository,
@@ -40,6 +43,7 @@ from domain.repositories import (
     QuotaTransactionRepository,
     RecordRepository,
     Repository,
+    UserRepository,
 )
 from infrastructure.db import Database
 
@@ -339,5 +343,21 @@ class SQLiteContributionRepo(SQLite3Repository[Contribution], ContributionReposi
         return self._query(
             f"SELECT {self._columns} FROM contributions "
             "WHERE member_id = ? ORDER BY date, id",
+            (member_id,),
+        )
+
+
+class SQLiteUserRepo(SQLite3Repository[User], UserRepository):
+    """登录账号（阶段 2.2 新增）。"""
+
+    table = "users"
+    entity_cls = User
+
+    def find_by_username(self, username: str) -> User | None:
+        return self._first(username=username)
+
+    def list_by_member(self, member_id: int) -> list[User]:
+        return self._query(
+            f"SELECT {self._columns} FROM users WHERE member_id = ? ORDER BY id",
             (member_id,),
         )

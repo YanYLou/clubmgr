@@ -38,6 +38,7 @@ MATRIX: dict[str, frozenset[Role]] = {
     "adjust_quota":    FULL,                      # 手工调整额度
     "purchase":        FULL,                      # 耗材入库 / 采购 / 新建耗材
     "manage_funds":    FULL,                      # 经费收支与贡献奖励
+    "manage_users":    FULL,                      # 登录账号管理（阶段 2.2 新增）
     "view_own":        EVERYONE,                  # 查看自己的额度与记录
     # 下面两个是阶段 1 新增的读权限：运营2 要选耗材才能记打印，所以能看耗材与库存；
     # 经费只给社长 / 副社长看。

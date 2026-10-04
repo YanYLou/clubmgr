@@ -10,6 +10,9 @@
 阶段 1 变更（按拍板结论）：``Record`` 去掉 ``is_charged`` / ``fee`` 两个字段
 （收费语义未定，先不在打印记录里记钱），新增 ``filament_id`` 外键，
 ``filament_name`` 保留作为历史快照。结构版本同步升到 2，见 ``infrastructure/db.py``。
+
+阶段 2.2 变更：新增 ``User``（登录账号），一个账号关联一个社员，
+权限仍然取自该社员的 ``role``，所以权限判断逻辑不用改。结构版本升到 3。
 """
 
 import datetime
@@ -35,6 +38,17 @@ class Member:
     role: Role = Role.MEMBER
     status: str = "active"      # active / left
     join_date: Optional[date] = None
+    note: Optional[str] = None
+
+@dataclass
+class User:
+    """登录账号（阶段 2.2 新增）。权限来自 ``member_id`` 对应社员的角色。"""
+
+    id: Optional[int] = None
+    username: str = ""
+    password_hash: str = ""     # pbkdf2_sha256$...，见 domain/security.py
+    member_id: int = 0
+    status: str = "active"      # active / disabled
     note: Optional[str] = None
 
 @dataclass

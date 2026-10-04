@@ -31,6 +31,7 @@ from domain.models import (
     QuotaTransaction,
     Record,
     Role,
+    User,
 )
 from domain.permissions import can, can_view_member, require
 from domain.repositories import (
@@ -42,7 +43,9 @@ from domain.repositories import (
     QuotaTransactionRepository,
     RecordRepository,
     TransactionManager,
+    UserRepository,
 )
+from domain.security import MIN_PASSWORD_LENGTH, hash_password, verify_password
 
 MEMBER_STATUSES = ("active", "left")
 CONTRIBUTION_TYPES = ("money", "material")
@@ -533,6 +536,86 @@ class ReportService(_Service):
         }
 
 
+# ---------------------------------------------------------------------------
+# 登录账号（阶段 2.2）
+# ---------------------------------------------------------------------------
+
+class UserService(_Service):
+    """登录账号：认证、开户、改口令、停用。
+
+    账号只负责"证明你是哪个社员"，权限仍然取自该社员的 ``role``，
+    因此所有业务权限判断都复用同一套权限矩阵。
+    """
+
+    def __init__(self, db: TransactionManager, member_repo: MemberRepository,
+                 user_repo: UserRepository) -> None:
+        super().__init__(db, member_repo)
+        self.user_repo = user_repo
+
+    def authenticate(self, username: str, password: str) -> User | None:
+        """校验账号口令，成功返回 User，失败返回 None（登录入口，不做权限校验）。"""
+        user = self.user_repo.find_by_username((username or "").strip())
+        if user is None or user.status != "active":
+            return None
+        if not verify_password(password or "", user.password_hash):
+            return None
+        return user
+
+    def get_user(self, user_id: int) -> User | None:
+        """按 id 取账号（Web 会话恢复用）。"""
+        return self.user_repo._get(user_id)
+
+    def member_of(self, user: User) -> Member | None:
+        """账号对应的社员，角色从这里取。"""
+        return self.member_repo._get(user.member_id)
+
+    def add_user(self, operator_id: int, username: str, password: str,
+                 member_id: int, *, note: str | None = None) -> User:
+        self._operator(operator_id, "manage_users")
+        member = self._member(member_id)
+        username = (username or "").strip()
+        if len(username) < 3:
+            raise ValueError("账号名至少 3 个字符")
+        if len(password or "") < MIN_PASSWORD_LENGTH:
+            raise ValueError(f"口令至少 {MIN_PASSWORD_LENGTH} 位")
+        if self.user_repo.find_by_username(username) is not None:
+            raise ValueError(f"账号已存在: {username}")
+        with self.db.transaction():
+            return self.user_repo._create(User(
+                username=username, password_hash=hash_password(password),
+                member_id=member.id, status="active", note=note))
+
+    def set_password(self, operator_id: int, user_id: int, new_password: str) -> User:
+        """改口令：本人可改自己的，改别人的需要 manage_users 权限。"""
+        operator = self._operator_only(operator_id)
+        user = self.user_repo._get(user_id)
+        if user is None:
+            raise ValueError(f"账号不存在: {user_id}")
+        if user.member_id != operator.id:
+            require(operator.role, "manage_users")
+        if len(new_password or "") < MIN_PASSWORD_LENGTH:
+            raise ValueError(f"口令至少 {MIN_PASSWORD_LENGTH} 位")
+        updated = replace(user, password_hash=hash_password(new_password))
+        with self.db.transaction():
+            self.user_repo._update(updated)
+        return updated
+
+    def disable(self, operator_id: int, user_id: int) -> User:
+        """停用账号（不删除，保留审计线索）。"""
+        self._operator(operator_id, "manage_users")
+        user = self.user_repo._get(user_id)
+        if user is None:
+            raise ValueError(f"账号不存在: {user_id}")
+        updated = replace(user, status="disabled")
+        with self.db.transaction():
+            self.user_repo._update(updated)
+        return updated
+
+    def list_users(self, operator_id: int) -> list[User]:
+        self._operator(operator_id, "manage_users")
+        return self.user_repo._list()
+
+
 @dataclass(frozen=True)
 class Services:
     """装配好的服务集合（由 ``main.build_services`` 构造）。"""
@@ -544,3 +627,4 @@ class Services:
     fund: FundService
     contribution: ContributionService
     report: ReportService
+    user: UserService

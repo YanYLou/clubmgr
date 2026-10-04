@@ -1,6 +1,6 @@
 
 -- 建表脚本，只在空库上执行（见 infrastructure/db.py 的 _init_schema）。
--- 结构版本：2 —— 与 db.py 的 SCHEMA_VERSION 保持一致；改动本文件必须同步 +1。
+-- 结构版本：3 —— 与 db.py 的 SCHEMA_VERSION 保持一致；改动本文件必须同步 +1。
 
 CREATE TABLE members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,6 +99,17 @@ CREATE TABLE contributions (
     note TEXT,
     FOREIGN KEY (member_id) REFERENCES members(id),
     FOREIGN KEY (operator_id) REFERENCES members(id)
+);
+
+-- 登录账号（阶段 2.2 新增）：权限取自关联社员的 role
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    member_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    note TEXT,
+    FOREIGN KEY (member_id) REFERENCES members(id)
 );
 
 -- 索引（阶段 1 新增）：额度 / 库存 / 经费余额都是 SUM 聚合，按维度建索引

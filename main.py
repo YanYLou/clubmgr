@@ -25,6 +25,7 @@ from domain.services import (
     RecordService,
     ReportService,
     Services,
+    UserService,
 )
 from infrastructure.db import Database
 from infrastructure.repositories import (
@@ -35,6 +36,7 @@ from infrastructure.repositories import (
     SQLiteMemberRepo,
     SQLiteQuotaRepo,
     SQLiteRecordRepo,
+    SQLiteUserRepo,
 )
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -52,7 +54,7 @@ def ensure_data_dir() -> Path:
 
 
 def build_repositories(db: Database) -> SimpleNamespace:
-    """构造 7 个具体仓储（阶段 1.4 新增）。"""
+    """构造具体仓储（阶段 1.4 新增，阶段 2.2 加入 users）。"""
     return SimpleNamespace(
         member=SQLiteMemberRepo(db),
         record=SQLiteRecordRepo(db),
@@ -61,6 +63,7 @@ def build_repositories(db: Database) -> SimpleNamespace:
         inventory=SQLiteInventoryRepo(db),
         fund=SQLiteFundRepo(db),
         contribution=SQLiteContributionRepo(db),
+        user=SQLiteUserRepo(db),
     )
 
 
@@ -80,6 +83,7 @@ def build_services(db: Database) -> Services:
         report=ReportService(db, repos.member, repos.record, repos.quota,
                              repos.filament, repos.inventory, repos.fund,
                              repos.contribution),
+        user=UserService(db, repos.member, repos.user),
     )
 
 

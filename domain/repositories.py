@@ -46,6 +46,12 @@ class MemberRepository(Repository[Member]):
     @abstractmethod
     def list_active(self) -> list[Member]: ...               # 阶段 1 新增：在社社员
 
+class UserRepository(Repository[User]):                      # 阶段 2.2 新增
+    @abstractmethod
+    def find_by_username(self, username: str) -> User | None: ...
+    @abstractmethod
+    def list_by_member(self, member_id: int) -> list[User]: ...
+
 class RecordRepository(Repository[Record]):
     @abstractmethod
     def list_by_member(self, member_id: int) -> list[Record]: ...

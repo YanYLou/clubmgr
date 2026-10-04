@@ -24,10 +24,11 @@ MEMORY = ":memory:"
 # 结构版本（阶段 1 新增）：与 schema.sql 顶部注释保持一致，改动表结构必须 +1。
 #   1 = 初始 8 张表
 #   2 = records 增加 filament_id、去掉 fee / is_charged，并补上索引
-SCHEMA_VERSION = 2
+#   3 = 新增 users 表（登录账号，阶段 2.2）
+SCHEMA_VERSION = 3
 
 class Database:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, check_same_thread: bool = True):
         path = str(path)
         self.path = path
 
@@ -38,7 +39,10 @@ class Database:
 
         # 阶段 0.2 修改：isolation_level=None 关闭 sqlite3 的隐式事务，
         # 事务边界完全由 transaction() 决定（原来用默认的隐式 BEGIN）。
-        self.conn = sqlite3.connect(path, isolation_level=None)
+        # 阶段 2.2 新增：Web 端多线程共用一个连接，需要 check_same_thread=False，
+        # 并由调用方（interfaces/app.py）用一把锁把请求串行化。
+        self.conn = sqlite3.connect(path, isolation_level=None,
+                                    check_same_thread=check_same_thread)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         if path != MEMORY:
