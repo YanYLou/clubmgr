@@ -1,5 +1,6 @@
 """蓝图注册（阶段 2.2）。按领域切分，页面只调用服务层。"""
 
+from interfaces.views.admin import bp as admin_bp
 from interfaces.views.auth import bp as auth_bp
 from interfaces.views.dashboard import bp as dashboard_bp
 from interfaces.views.filaments import bp as filaments_bp
@@ -18,6 +19,7 @@ BLUEPRINTS = (
     quota_bp,
     fund_bp,
     users_bp,
+    admin_bp,
 )
 
 

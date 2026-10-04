@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}维护{% endblock %}
+{% block body %}
+<div class="card">
+  <h2>数据库</h2>
+  <table>
+    <tr><th>数据库文件</th><td>{{ db_path }}</td></tr>
+    <tr><th>备份目录</th><td>{{ backup_dir }}</td></tr>
+  </table>
+  <form method="post" action="{{ url_for('admin.backup') }}" class="inline"
+        style="margin-top:.8rem">
+    <label>保留最近几份<input name="keep" type="number" min="1" value="10"></label>
+    <button>立即备份</button>
+  </form>
+  <p class="muted">
+    热备份：备份期间照样可以记打印。命令行等价操作 <code>python main.py backup</code>；
+    体检用 <code>python main.py doctor</code>。
+  </p>
+</div>
+
+<div class="card">
+  <h3>已有备份（{{ backups|length }} 份）</h3>
+  <table>
+    <tr><th>文件</th><th>大小</th><th>路径</th></tr>
+    {% for backup in backups %}
+      <tr><td>{{ backup.name }}</td><td>{{ backup.size }}</td><td class="muted">{{ backup.path }}</td></tr>
+    {% else %}
+      <tr><td colspan="3" class="muted">还没有备份</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h3>公示报表</h3>
+  <p class="muted">
+    内容：社员额度、耗材库存、经费流水、贡献名单（余额都由流水实时汇总）。
+  </p>
+  <p>
+    <a href="{{ url_for('admin.report_markdown') }}"><button>下载 Markdown</button></a>
+  </p>
+  <p class="muted">
+    要 CSV（Excel 直接打开）：<code>python main.py --operator &lt;社长&gt; report export --csv</code>
+  </p>
+</div>
+{% endblock %}

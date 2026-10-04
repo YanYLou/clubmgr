@@ -89,3 +89,5 @@ class ReservationRepository(Repository[Reservation]):
 class ContributionRepository(Repository[Contribution]):
     @abstractmethod
     def list_by_member(self, member_id: int) -> list[Contribution]: ...
+    @abstractmethod
+    def list_by_date_range(self, start: date, end: date) -> list[Contribution]: ...  # 阶段 2.5 新增

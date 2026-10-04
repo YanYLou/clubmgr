@@ -28,7 +28,8 @@ from domain.models import Role
 from infrastructure.backup import (DEFAULT_KEEP, create_backup,
                                    default_backup_dir, list_backups)
 from infrastructure.db import SCHEMA_VERSION, Database
-from main import DB_PATH, build_services
+from interfaces.reports import export as export_report
+from main import DATA_DIR, DB_PATH, build_services
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +252,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = report.add_parser("statement", help="个人额度单")
     p.add_argument("--member", help="默认自己")
     p.set_defaults(handler=_report_statement)
+
+    p = report.add_parser("export", help="导出公示报表（Markdown，可加 CSV）")
+    p.add_argument("--out", help=f"输出目录（默认 {DATA_DIR / 'reports'}）")
+    p.add_argument("--csv", action="store_true", help="同时写 4 个 CSV（Excel 可直接打开）")
+    p.add_argument("--start", help="统计起始日期 YYYY-MM-DD")
+    p.add_argument("--end", help="统计结束日期 YYYY-MM-DD")
+    p.set_defaults(handler=_report_export)
 
     # --- user（阶段 2.2）--------------------------------------------------
     user = top.add_parser("user", help="登录账号").add_subparsers(
@@ -573,6 +581,20 @@ def _user_disable(args, services) -> Result:
     updated = services.user.disable(operator.id, user.id)
     return _table(f"已停用账号 {updated.username}",
                   [_user_row(services, updated)])
+
+
+def _report_export(args, services) -> Result:
+    """导出公示报表（额度 / 库存 / 经费 / 贡献）。"""
+    operator = _operator(args, services)
+    out_dir = Path(args.out) if args.out else DATA_DIR / "reports"
+    markdown, csvs = export_report(
+        services, operator.id, out_dir,
+        start=_date(args.start), end=_date(args.end), write_csv=args.csv)
+
+    files = [markdown, *csvs]
+    rows = [[path.name, f"{path.stat().st_size} 字节", str(path.parent)] for path in files]
+    payload = {"markdown": str(markdown), "files": [str(path) for path in files]}
+    return Result(f"已导出公示报表：{markdown}", ["文件", "大小", "目录"], rows, payload)
 
 
 # ---------------------------------------------------------------------------

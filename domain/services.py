@@ -524,6 +524,14 @@ class ReportService(_Service):
             transactions = self.fund_repo._list()
         return {"balance": self.fund_repo.balance(), "transactions": transactions}
 
+    def contributions_report(self, operator_id: int, *, start: date | None = None,
+                             end: date | None = None) -> list[Contribution]:
+        """贡献名单（阶段 2.5 新增，公示用）。"""
+        self._operator(operator_id, "view_all")
+        if start is not None and end is not None:
+            return self.contribution_repo.list_by_date_range(start, end)
+        return self.contribution_repo._list()
+
     def member_statement(self, operator_id: int, member_id: int) -> dict:
         """个人额度单：社员 + 余额 + 打印记录 + 额度流水 + 贡献记录。"""
         operator = self._operator_only(operator_id)

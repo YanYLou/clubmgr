@@ -346,6 +346,14 @@ class SQLiteContributionRepo(SQLite3Repository[Contribution], ContributionReposi
             (member_id,),
         )
 
+    def list_by_date_range(self, start: date, end: date) -> list[Contribution]:
+        """按日期区间查贡献（阶段 2.5 新增，公示名单用）。"""
+        return self._query(
+            f"SELECT {self._columns} FROM contributions "
+            "WHERE date BETWEEN ? AND ? ORDER BY date, id",
+            (start.isoformat(), end.isoformat()),
+        )
+
 
 class SQLiteUserRepo(SQLite3Repository[User], UserRepository):
     """登录账号（阶段 2.2 新增）。"""

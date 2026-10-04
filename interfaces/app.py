@@ -53,8 +53,9 @@ def create_app(db_path: str | Path | None = None,
     """建应用：装配服务层、注册蓝图、挂上会话恢复与请求锁。"""
     app = Flask(__name__)
     app.secret_key = secret_key or _secret_key()
+    app.config["DB_PATH"] = str(db_path or DB_PATH)
     app.config["SERVICES"] = build_services(
-        Database(db_path or DB_PATH, check_same_thread=False))
+        Database(app.config["DB_PATH"], check_same_thread=False))
 
     from interfaces.views import register_blueprints
     from interfaces.views.common import can, load_session_identity

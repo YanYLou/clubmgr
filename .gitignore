@@ -36,3 +36,6 @@ data/
 .mypy_cache/
 .ruff_cache/
 *.log
+
+# 导出的公示报表（阶段 2.5 新增；默认写 data/reports，这里兜底 --out reports）
+reports/
