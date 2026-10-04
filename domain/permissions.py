@@ -51,6 +51,7 @@ MATRIX: dict[str, frozenset[Role]] = {
     "edit_members":    FULL | {Role.HR},          # 成员增改 / 退社
     "schedule":        FULL | OPS,                # 预约安排（替别人提交 / 排进时间格）
     "review_reservation": FULL | OPS,             # 审核预约
+    "urgent_reservation": FULL | OPS,             # 紧急提前 / 挤掉（阶段 3.4）
     "write_record":    FULL | OPS,                # 记录打印（含耗材出库）
     "allow_overdraft": FULL,                      # 额度不足时仍然记账
     "adjust_quota":    FULL,                      # 手工调整额度

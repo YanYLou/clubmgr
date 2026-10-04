@@ -25,6 +25,9 @@
 结构版本升到 5。
 
 阶段 3.3 变更：新增 ``Printer``（3 台打印机与占用状态）。结构版本升到 6。
+
+阶段 3.4 变更：``Reservation`` 增加 ``urgent_by`` / ``urgent_reason`` / ``urgent_at``
+（紧急任务提前/挤掉的留痕），并新增 ``reschedule``（待重排）状态。结构版本升到 7。
 """
 
 import datetime
@@ -141,10 +144,13 @@ class Reservation:
     week_start: date = field(default_factory=date.today)   # 所在周的周一
     activity_day: str = ""            # mon / wed / fri
     order_no: int = 0                 # 0 = 未排班；通过时分配 1..n
-    status: str = "pending"           # pending / approved / rejected / cancelled
+    status: str = "pending"           # pending / approved / rejected / cancelled / reschedule
     operator_id: int = 0              # 提交人
     reviewer_id: Optional[int] = None # 审核（或撤销）的人
     reviewed_at: Optional[datetime.datetime] = None
+    urgent_by: Optional[int] = None            # 紧急提前 / 挤掉的操作人（阶段 3.4）
+    urgent_reason: Optional[str] = None        # 紧急原因（留痕）
+    urgent_at: Optional[datetime.datetime] = None
     note: Optional[str] = None
 
 @dataclass

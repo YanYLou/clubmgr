@@ -19,6 +19,132 @@ def op1(services, club):
                                         role=Role.OP1, student_id="10007")
 
 
+def _approved(services, operator_id, member_id, day, week=MONDAY):
+    reservation = services.reservation.create(operator_id, activity_day=day,
+                                              week_start=week, member_id=member_id)
+    return services.reservation.review(operator_id, reservation.id, approve=True)
+
+
+# ---------------------------------------------------------------------------
+# 紧急任务（阶段 3.4）：提到本周 + 插队
+# ---------------------------------------------------------------------------
+
+def test_urgent_pull_moves_to_this_week_and_shifts_others(services, club, op1):
+    # 周三已排两个人：张三（序号 1）、运营2（序号 2）
+    first = _approved(services, op1.id, club.member.id, "wed")
+    second = _approved(services, op1.id, club.op2.id, "wed")
+    assert (first.order_no, second.order_no) == (1, 2)
+
+    # 下周一有一条待审核的预约，学校任务要把它提到本周周三最前面
+    later = services.reservation.create(club.hr.id, activity_day="mon",
+                                        week_start=date(2026, 10, 12))
+
+    urgent = services.reservation.pull_to_this_week(
+        op1.id, later.id, week_start=WEDNESDAY, activity_day="wed",
+        note="学校下派的展示模型")
+
+    assert urgent.status == "approved"
+    assert urgent.order_no == 1
+    assert urgent.week_start == MONDAY                     # 归一到周一
+    assert urgent.activity_day == "wed"
+    assert urgent.urgent_by == op1.id
+    assert urgent.urgent_reason == "学校下派的展示模型"
+    assert urgent.urgent_at is not None
+
+    # 原来的人整体后移
+    assert services.reservation._reservation(first.id).order_no == 2
+    assert services.reservation._reservation(second.id).order_no == 3
+
+    # 被顺延的两位都收到通知，本人也收到"已提前"
+    assert services.notification.unread_count(club.member.id) == 1
+    assert services.notification.unread_count(club.op2.id) == 1
+    assert services.notification.unread_count(club.hr.id) == 1
+    titles = [n.title for n in services.notification.list_for(club.op2.id)]
+    assert "顺延" in titles[0]
+
+
+def test_urgent_pull_requires_reason_and_permission(services, club, op1):
+    approved = _approved(services, op1.id, club.member.id, "wed")
+
+    with pytest.raises(ValueError):
+        services.reservation.pull_to_this_week(op1.id, approved.id, note="   ")
+
+    with pytest.raises(PermissionError):
+        services.reservation.pull_to_this_week(club.hr.id, approved.id, note="学校任务")
+
+    with pytest.raises(PermissionError):
+        services.reservation.pull_to_this_week(club.member.id, approved.id, note="学校任务")
+
+
+def test_urgent_pull_rejects_same_member_same_day(services, club, op1):
+    approved = _approved(services, op1.id, club.member.id, "wed")
+    other = _approved(services, op1.id, club.member.id, "fri")
+
+    with pytest.raises(ValueError) as excinfo:
+        services.reservation.pull_to_this_week(op1.id, other.id, week_start=MONDAY,
+                                               activity_day="wed", note="学校任务")
+    assert "已经有排班" in str(excinfo.value)
+
+
+def test_urgent_pull_rejects_bad_day_and_status(services, club, op1):
+    approved = _approved(services, op1.id, club.member.id, "wed")
+
+    with pytest.raises(ValueError):
+        services.reservation.pull_to_this_week(op1.id, approved.id,
+                                               activity_day="tue", note="学校任务")
+
+    cancelled = services.reservation.cancel(club.member.id, approved.id)
+    assert cancelled.status == "cancelled"
+    with pytest.raises(ValueError) as excinfo:
+        services.reservation.pull_to_this_week(op1.id, approved.id, note="学校任务")
+    assert "不能提前" in str(excinfo.value)
+
+
+def test_bump_sets_reschedule_and_notifies_owner(services, club, op1):
+    approved = _approved(services, op1.id, club.member.id, "wed")
+    services.notification.mark_all_read(club.member.id)
+
+    bumped = services.reservation.bump(op1.id, approved.id, note="学校任务要占用")
+
+    assert bumped.status == "reschedule"
+    assert bumped.order_no == 0
+    assert bumped.urgent_reason == "学校任务要占用"
+
+    assert services.reservation.schedule(op1.id)["days"][1][1] == []      # 周三空了
+    assert [r.id for r in services.reservation.reschedule_list(op1.id)] == [approved.id]
+
+    inbox = services.notification.list_for(club.member.id, unread_only=True)
+    assert len(inbox) == 1 and "紧急任务" in inbox[0].title
+
+    # 待重排的还能重新排上
+    again = services.reservation.review(op1.id, approved.id, approve=True)
+    assert again.status == "approved" and again.order_no == 1
+
+
+def test_bump_rules(services, club, op1):
+    pending = services.reservation.create(club.member.id, activity_day="wed",
+                                          week_start=MONDAY)
+
+    with pytest.raises(ValueError) as excinfo:
+        services.reservation.bump(op1.id, pending.id, note="学校任务")
+    assert "只有已通过" in str(excinfo.value)
+
+    with pytest.raises(ValueError):
+        services.reservation.bump(op1.id, pending.id, note="  ")
+
+    with pytest.raises(PermissionError):
+        services.reservation.bump(club.hr.id, pending.id, note="学校任务")
+
+
+def test_reschedule_list_requires_review_permission(services, club, op1):
+    _approved(services, op1.id, club.member.id, "wed")
+
+    with pytest.raises(PermissionError):
+        services.reservation.reschedule_list(club.member.id)
+
+    assert services.reservation.reschedule_list(club.op2.id) == []
+
+
 # ---------------------------------------------------------------------------
 # 提交
 # ---------------------------------------------------------------------------
@@ -289,7 +415,7 @@ def test_web_reject_and_cancel(web):
     assert "已驳回预约 #1" in body
 
     body = _text(member_client.get("/reservations"))
-    assert "rejected" in body and "当天名额满了" in body
+    assert "已驳回" in body and "当天名额满了" in body
 
     # 被驳回之后可以重新提交，并且本人可以撤销
     member_client.post("/reservations/add", data={
@@ -297,7 +423,7 @@ def test_web_reject_and_cancel(web):
     }, follow_redirects=True)
     body = _text(member_client.post("/reservations/2/cancel", data={},
                                     follow_redirects=True))
-    assert "已撤销预约 #2" in body and "cancelled" in body
+    assert "已撤销预约 #2" in body and "已撤销" in body
 
 
 def test_web_staff_can_submit_for_others(web):
@@ -318,4 +444,67 @@ def test_web_staff_can_submit_for_others(web):
     reservation = services.reservation.mine(op1.id)      # 提交人是运营1
     assert reservation == []
     assert services.reservation.mine(op1.id, member_id=services.member.find_by_token("10005").id)
+
+
+def test_web_urgent_and_bump(web):
+    """阶段 3.4：页面上的紧急提前与挤掉。"""
+    services = web.config["SERVICES"]
+    member_client = _login(web, "zhangsan", "zhang123")
+    member_client.post("/reservations/add", data={
+        "activity_day": "wed", "week": "2026-10-05", "note": "打模型",
+    }, follow_redirects=True)
+
+    reviewer = _login(web, "op2user", "op2pass123")
+    reviewer.post("/reservations/1/approve", data={"order": "1"}, follow_redirects=True)
+
+    body = _text(reviewer.get("/reservations?week=2026-10-05"))
+    assert "紧急任务（本周已通过的排班）" in body and "挤掉" in body
+
+    # 原因必填
+    body = _text(reviewer.post("/reservations/1/urgent", data={
+        "week": "2026-10-05", "note": "  "}, follow_redirects=True))
+    assert "必须写备注" in body
+
+    body = _text(reviewer.post("/reservations/1/urgent", data={
+        "week": "2026-10-05", "day": "wed", "note": "学校下派任务",
+    }, follow_redirects=True))
+    assert "已紧急提前 #1" in body
+    assert "［紧急］" in body and "学校下派任务" in body
+
+    saved = services.reservation._reservation(1)
+    assert saved.urgent_reason == "学校下派任务" and saved.urgent_by is not None
+
+    # 挤掉：退回待重排并通知本人
+    body = _text(reviewer.post("/reservations/1/bump", data={
+        "note": "学校任务占用"}, follow_redirects=True))
+    assert "已挤掉排班 #1" in body
+
+    saved = services.reservation._reservation(1)
+    assert saved.status == "reschedule"
+    assert services.notification.list_for(
+        services.member.find_by_token("10005").id, unread_only=True)
+
+    # 待重排区可以看到并重新排上
+    body = _text(reviewer.get("/reservations?week=2026-10-05"))
+    assert "待重排" in body and "重新排上" in body
+
+    body = _text(reviewer.post("/reservations/1/approve", data={"order": "1"},
+                               follow_redirects=True))
+    assert "已通过预约 #1" in body
+    assert services.reservation._reservation(1).status == "approved"
+
+
+def test_web_urgent_requires_permission(web):
+    member_client = _login(web, "zhangsan", "zhang123")
+    member_client.post("/reservations/add", data={
+        "activity_day": "wed", "week": "2026-10-05",
+    }, follow_redirects=True)
+
+    body = _text(member_client.post("/reservations/1/urgent", data={
+        "week": "2026-10-05", "note": "我想插队"}, follow_redirects=True))
+    assert "没有权限" in body
+
+    # 普通社员的页面也看不到紧急操作区
+    assert "紧急任务（本周已通过的排班）" not in _text(
+        member_client.get("/reservations?week=2026-10-05"))
 

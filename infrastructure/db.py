@@ -28,7 +28,8 @@ MEMORY = ":memory:"
 #   4 = reservations 增加审核人 / 审核时间，并加"同一天同一人只能有一条已通过"唯一索引
 #   5 = 新增 settings（全局配置）与 notifications（站内通知）
 #   6 = 新增 printers（打印机状态）
-SCHEMA_VERSION = 6
+#   7 = reservations 增加紧急操作留痕（urgent_by / urgent_reason / urgent_at）
+SCHEMA_VERSION = 7
 
 class Database:
     def __init__(self, path: str | Path, *, check_same_thread: bool = True):

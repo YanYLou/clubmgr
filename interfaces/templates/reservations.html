@@ -15,8 +15,15 @@
         <tr>
           <td>{{ day_labels[day] }}</td>
           <td>{{ item.order_no }}</td>
-          <td>{{ schedule.names.get(item.member_id, '#' ~ item.member_id) }}</td>
-          <td>{{ item.note or '-' }}</td>
+          <td>{{ schedule.names.get(item.member_id, '#' ~ item.member_id) }}
+            {% if item.urgent_reason %}<strong class="neg">［紧急］</strong>{% endif %}
+          </td>
+          <td>
+            {{ item.note or '-' }}
+            {% if item.urgent_reason %}
+              <span class="muted">（紧急原因：{{ item.urgent_reason }}）</span>
+            {% endif %}
+          </td>
         </tr>
       {% else %}
         <tr><td>{{ day_labels[day] }}</td><td colspan="3" class="muted">还没有排班</td></tr>
@@ -25,6 +32,77 @@
   </table>
   <p class="muted">只有审核通过的预约才会出现在这里。</p>
 </div>
+
+{% if urgent_allowed and approved %}
+<div class="card">
+  <h3>紧急任务（本周已通过的排班）</h3>
+  <p class="muted">
+    学校任务下派时：<strong>紧急提前</strong>会把这条提到目标周并插到最前面（当天其他人自动顺延并收到通知）；
+    <strong>挤掉</strong>会把这条退回"待重排"并通知本人。两种操作都会留痕（谁、为什么）。
+  </p>
+  <table>
+    <tr><th>id</th><th>社员</th><th>周</th><th>活动日</th><th>序号</th>
+        <th>紧急提前</th><th>挤掉</th></tr>
+    {% for item in approved %}
+      <tr>
+        <td>{{ item.id }}</td>
+        <td>{{ names.get(item.member_id, '#' ~ item.member_id) }}</td>
+        <td>{{ item.week_start }}</td>
+        <td>{{ day_labels.get(item.activity_day, item.activity_day) }}</td>
+        <td>{{ item.order_no }}</td>
+        <td>
+          <form method="post" action="{{ url_for('reservations.urgent', reservation_id=item.id) }}"
+                class="inline">
+            <input name="note" placeholder="原因（必填）" required>
+            <input name="week" placeholder="目标周" style="width:7rem">
+            <select name="day">
+              <option value="">（沿用原活动日）</option>
+              {% for day in days %}
+                <option value="{{ day }}">{{ day_labels[day] }}</option>
+              {% endfor %}
+            </select>
+            <input name="order" type="number" min="1" placeholder="序号" style="width:5rem">
+            <button>紧急提前</button>
+          </form>
+        </td>
+        <td>
+          <form method="post" action="{{ url_for('reservations.bump', reservation_id=item.id) }}"
+                class="inline" onsubmit="return confirm('确认挤掉这条排班？本人会收到通知')">
+            <input name="note" placeholder="原因（必填）" required>
+            <button class="ghost">挤掉</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{% if can('review_reservation') and reschedule %}
+<div class="card">
+  <h3>待重排（{{ reschedule|length }} 条）</h3>
+  <p class="muted">这些预约被挤掉或受活动日变动影响，需要重新安排时间；通过后会重新进入排班表。</p>
+  <table>
+    <tr><th>id</th><th>社员</th><th>周</th><th>活动日</th><th>原因</th><th>重新排班</th></tr>
+    {% for item in reschedule %}
+      <tr>
+        <td>{{ item.id }}</td>
+        <td>{{ names.get(item.member_id, '#' ~ item.member_id) }}</td>
+        <td>{{ item.week_start }}</td>
+        <td>{{ day_labels.get(item.activity_day, item.activity_day) }}</td>
+        <td>{{ item.urgent_reason or item.note or '-' }}</td>
+        <td>
+          <form method="post" action="{{ url_for('reservations.approve', reservation_id=item.id) }}"
+                class="inline">
+            <input name="order" type="number" min="1" placeholder="序号" style="width:5rem">
+            <button>重新排上</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
 
 <div class="card">
   <h3>提交预约</h3>
@@ -54,10 +132,12 @@
         <td>{{ item.week_start }}</td>
         <td>{{ day_labels.get(item.activity_day, item.activity_day) }}</td>
         <td>{{ item.order_no or '-' }}</td>
-        <td>{{ item.status }}</td>
+        <td>{{ status_labels.get(item.status, item.status) }}
+          {% if item.urgent_reason %}<strong class="neg">［紧急］</strong>{% endif %}
+        </td>
         <td>{{ item.note or '-' }}</td>
         <td>
-          {% if item.status in ('pending', 'approved') %}
+          {% if item.status in ('pending', 'approved', 'reschedule') %}
             <form method="post" action="{{ url_for('reservations.cancel', reservation_id=item.id) }}"
                   class="inline" onsubmit="return confirm('确认撤销这条预约？')">
               <button class="ghost">撤销</button>

@@ -1,6 +1,6 @@
 
 -- 建表脚本，只在空库上执行（见 infrastructure/db.py 的 _init_schema）。
--- 结构版本：6 —— 与 db.py 的 SCHEMA_VERSION 保持一致；改动本文件必须同步 +1。
+-- 结构版本：7 —— 与 db.py 的 SCHEMA_VERSION 保持一致；改动本文件必须同步 +1。
 
 CREATE TABLE members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,14 +80,18 @@ CREATE TABLE reservations (
     week_start TEXT NOT NULL,
     activity_day TEXT NOT NULL,
     order_no INTEGER NOT NULL DEFAULT 0,          -- 0 = 未排班；审核通过时分配 1..n
-    status TEXT NOT NULL DEFAULT 'pending',       -- pending / approved / rejected / cancelled
+    status TEXT NOT NULL DEFAULT 'pending',       -- pending / approved / rejected / cancelled / reschedule（待重排）
     operator_id INTEGER NOT NULL,                 -- 提交人
     reviewer_id INTEGER,                          -- 审核（或撤销）的人
     reviewed_at TEXT,                             -- 审核时间
+    urgent_by INTEGER,                            -- 紧急提前 / 挤掉的操作人（阶段 3.4）
+    urgent_reason TEXT,                           -- 紧急原因（留痕）
+    urgent_at TEXT,                               -- 紧急操作时间
     note TEXT,
     FOREIGN KEY (member_id) REFERENCES members(id),
     FOREIGN KEY (operator_id) REFERENCES members(id),
-    FOREIGN KEY (reviewer_id) REFERENCES members(id)
+    FOREIGN KEY (reviewer_id) REFERENCES members(id),
+    FOREIGN KEY (urgent_by) REFERENCES members(id)
 );
 
 CREATE TABLE contributions (

@@ -324,6 +324,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--week", help="该周任意日期 YYYY-MM-DD（默认本周）")
     p.set_defaults(handler=_reservation_schedule)
 
+    p = reservation.add_parser("urgent",
+                               help="紧急任务：提到本周并插到最前面（阶段 3.4）")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--week", help="目标周任意日期 YYYY-MM-DD（默认本周）")
+    p.add_argument("--day", choices=list(ACTIVITY_DAYS), help="目标活动日（默认沿用原来的）")
+    p.add_argument("--order", type=int, help="插到第几位（默认 1）")
+    p.add_argument("--note", required=True, help="紧急原因（留痕 + 通知相关人员）")
+    p.set_defaults(handler=_reservation_urgent)
+
+    p = reservation.add_parser("bump",
+                               help="挤掉某条已通过的排班（退回待重排并通知本人）")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--note", required=True, help="挤掉的原因（留痕 + 通知本人）")
+    p.set_defaults(handler=_reservation_bump)
+
+    p = reservation.add_parser("reschedule", help="待重排列表（需要审核权限）")
+    p.set_defaults(handler=_reservation_reschedule)
+
     # --- printer（阶段 3.3）-----------------------------------------------
     printer = top.add_parser("printer", help="打印机（空闲 / 使用中 / 维修中）").add_subparsers(
         dest="action", required=True)
@@ -782,6 +800,35 @@ def _reservation_cancel(args, services) -> Result:
     operator = _operator(args, services)
     reservation = services.reservation.cancel(operator.id, args.id, note=args.note)
     return _reservation_result(services, f"已撤销预约 #{reservation.id}", reservation)
+
+
+def _reservation_urgent(args, services) -> Result:
+    operator = _operator(args, services)
+    reservation = services.reservation.pull_to_this_week(
+        operator.id, args.id, week_start=_date(args.week), activity_day=args.day,
+        note=args.note, order_no=args.order)
+    return _reservation_result(
+        services,
+        f"已紧急提前：预约 #{reservation.id} → {reservation.week_start} "
+        f"{DAY_LABELS.get(reservation.activity_day, reservation.activity_day)} "
+        f"序号 {reservation.order_no}",
+        reservation)
+
+
+def _reservation_bump(args, services) -> Result:
+    operator = _operator(args, services)
+    reservation = services.reservation.bump(operator.id, args.id, note=args.note)
+    return _reservation_result(
+        services, f"已挤掉排班 #{reservation.id}（本人已收到通知，状态＝待重排）",
+        reservation)
+
+
+def _reservation_reschedule(args, services) -> Result:
+    operator = _operator(args, services)
+    result = _reservation_rows(services,
+                               services.reservation.reschedule_list(operator.id))
+    result.title = "待重排的预约"
+    return result
 
 
 def _reservation_schedule(args, services) -> Result:

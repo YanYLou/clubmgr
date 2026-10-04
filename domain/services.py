@@ -59,7 +59,10 @@ MEMBER_STATUSES = ("active", "left")
 CONTRIBUTION_TYPES = ("money", "material")
 ACTIVITY_DAYS = ("mon", "wed", "fri")
 DAY_LABELS = {"mon": "周一", "wed": "周三", "fri": "周五"}
-RESERVATION_STATUSES = ("pending", "approved", "rejected", "cancelled")
+RESERVATION_STATUSES = ("pending", "approved", "rejected", "cancelled", "reschedule")
+RESERVATION_STATUS_LABELS = {"pending": "待审核", "approved": "已通过",
+                             "rejected": "已驳回", "cancelled": "已撤销",
+                             "reschedule": "待重排"}
 SETTING_LOW_STOCK = "low_stock_threshold"          # 全局配置键（阶段 3.2）
 DEFAULT_LOW_STOCK_THRESHOLD = 100.0                # 默认低库存阈值（克）
 PRINTER_STATUSES = ("idle", "in_use", "maintenance")          # 阶段 3.3
@@ -1000,13 +1003,18 @@ class ReservationService(_Service):
     - **只有社长 / 副社长 / 运维（op1、op2）能审核**（权限 ``review_reservation``）；
       通过时分配排班序号，同日同人只能有一条已通过（数据库部分唯一索引兜底）；
     - 提交人可以撤销自己的待审核 / 已通过预约，撤销后名额释放；
-    - 排班表（已通过的预约）所有登录用户都能看。
+    - 排班表（已通过的预约）所有登录用户都能看；
+    - **紧急任务**（阶段 3.4）：社长 / 副社长 / 运维可以把预约**提到本周并插到最前面**
+      （当天其他人自动后移并收到通知），也可以**挤掉**某条已通过的排班
+      （那条变成"待重排"并通知本人）；两种操作都留痕（谁、为什么、什么时候）。
     """
 
     def __init__(self, db: TransactionManager, member_repo: MemberRepository,
-                 reservation_repo: ReservationRepository) -> None:
+                 reservation_repo: ReservationRepository,
+                 notifications: NotificationService | None = None) -> None:
         super().__init__(db, member_repo)
         self.reservation_repo = reservation_repo
+        self.notifications = notifications
 
     # -- 提交 ---------------------------------------------------------------
 
@@ -1041,8 +1049,9 @@ class ReservationService(_Service):
         """审核：通过与驳回。通过会分配排班序号并进入排班表。"""
         operator = self._operator(operator_id, "review_reservation")
         reservation = self._reservation(reservation_id)
-        if reservation.status != "pending":
-            raise ValueError(f"只有待审核的预约能审核，这条当前是 {reservation.status}")
+        if reservation.status not in ("pending", "reschedule"):
+            raise ValueError(
+                f"只有待审核 / 待重排的预约能审核，这条当前是 {reservation.status}")
 
         if approve:
             existing = self.reservation_repo.find_approved(
@@ -1079,8 +1088,9 @@ class ReservationService(_Service):
         """撤销预约：本人随时可以撤；撤别人的需要审核权限。"""
         operator = self._operator_only(operator_id)
         reservation = self._reservation(reservation_id)
-        if reservation.status not in ("pending", "approved"):
-            raise ValueError(f"只有待审核 / 已通过的预约能撤销，这条是 {reservation.status}")
+        if reservation.status not in ("pending", "approved", "reschedule"):
+            raise ValueError(
+                f"只有待审核 / 已通过 / 待重排的预约能撤销，这条是 {reservation.status}")
         if reservation.member_id != operator.id:
             require(operator.role, "review_reservation")
 
@@ -1090,6 +1100,100 @@ class ReservationService(_Service):
         with self.db.transaction():
             self.reservation_repo._update(updated)
         return updated
+
+    # -- 紧急任务（阶段 3.4）-------------------------------------------------
+
+    def pull_to_this_week(self, operator_id: int, reservation_id: int, *,
+                          week_start: date | None = None,
+                          activity_day: str | None = None,
+                          note: str, order_no: int | None = None) -> Reservation:
+        """紧急任务：把某条预约提到本周（或指定周）并插到最前面。
+
+        - 允许 pending / approved / 待重排 的预约；
+        - 目标活动日默认沿用原来的活动日；
+        - 该社员在目标日若已有**另一条**已通过的排班 → 拒绝；
+        - 插队 = 序号 1，当天其他已通过的预约整体后移一位并逐个收到通知；
+        - 留痕：urgent_by / urgent_reason / urgent_at。
+        """
+        operator = self._operator(operator_id, "urgent_reservation")
+        text = _note_or_error(note, "紧急提前")
+        reservation = self._reservation(reservation_id)
+        if reservation.status not in ("pending", "approved", "reschedule"):
+            raise ValueError(f"当前状态不能提前：{reservation.status}")
+
+        week = _week_start(week_start)
+        day = (activity_day or reservation.activity_day or "").strip().lower()
+        if day not in ACTIVITY_DAYS:
+            raise ValueError(f"活动日只能是 {ACTIVITY_DAYS}，收到 {activity_day!r}")
+
+        conflict = self.reservation_repo.find_approved(week, day, reservation.member_id)
+        if conflict is not None and conflict.id != reservation.id:
+            raise ValueError(
+                f"该社员在 {week}（{DAY_LABELS[day]}）已经有排班 #{conflict.id}")
+
+        sequence = order_no or 1
+        if sequence <= 0:
+            raise ValueError("排班序号必须大于 0")
+
+        others = [r for r in self.reservation_repo.list_by_week(week)
+                  if r.activity_day == day and r.status == "approved"
+                  and r.id != reservation.id]
+        shifted = [r for r in others if r.order_no >= sequence]
+
+        now = datetime.now()
+        with self.db.transaction():
+            for other in shifted:
+                self.reservation_repo._update(
+                    replace(other, order_no=other.order_no + 1))
+
+            updated = replace(reservation, week_start=week, activity_day=day,
+                              status="approved", order_no=sequence,
+                              reviewer_id=operator.id, reviewed_at=now,
+                              urgent_by=operator.id, urgent_reason=text,
+                              urgent_at=now)
+            self.reservation_repo._update(updated)
+
+            if self.notifications is not None:
+                for other in shifted:
+                    self.notifications.send(
+                        [other.member_id], type="reservation_shifted",
+                        title=f"你的排班顺序被顺延了（{week} {DAY_LABELS[day]}）",
+                        body=f"因为紧急任务：{text}；新的序号见排班表。",
+                        ref=f"reservation:{other.id}")
+                self.notifications.send(
+                    [reservation.member_id], type="reservation_urgent",
+                    title=f"你的预约被紧急提前（{week} {DAY_LABELS[day]} 序号 {sequence}）",
+                    body=f"原因：{text}",
+                    ref=f"reservation:{reservation.id}")
+        return updated
+
+    def bump(self, operator_id: int, reservation_id: int, *, note: str) -> Reservation:
+        """挤掉别人：把一条已通过的排班退回"待重排"并通知本人（留痕）。"""
+        operator = self._operator(operator_id, "urgent_reservation")
+        text = _note_or_error(note, "挤掉排班")
+        reservation = self._reservation(reservation_id)
+        if reservation.status != "approved":
+            raise ValueError(f"只有已通过的排班能挤掉，当前是 {reservation.status}")
+
+        now = datetime.now()
+        updated = replace(reservation, status="reschedule", order_no=0,
+                          reviewer_id=operator.id, reviewed_at=now,
+                          urgent_by=operator.id, urgent_reason=text, urgent_at=now)
+        with self.db.transaction():
+            self.reservation_repo._update(updated)
+            if self.notifications is not None:
+                self.notifications.send(
+                    [reservation.member_id], type="reservation_bumped",
+                    title=(f"你的排班被紧急任务占用了（{reservation.week_start} "
+                           f"{DAY_LABELS.get(reservation.activity_day, reservation.activity_day)}）"),
+                    body=f"原因：{text}。可以重新选时间，运营会帮你重排。",
+                    ref=f"reservation:{reservation.id}")
+        return updated
+
+    def reschedule_list(self, operator_id: int) -> list[Reservation]:
+        """待重排列表（需要审核权限）。"""
+        self._operator(operator_id, "review_reservation")
+        return self.reservation_repo.list_by_status("reschedule")
 
     # -- 查询 ---------------------------------------------------------------
 
