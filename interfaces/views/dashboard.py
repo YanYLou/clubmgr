@@ -23,7 +23,8 @@ def index():
         }
         if can("view_funds"):
             club["fund_balance"] = report.fund_balance(g.member.id)
-    return render_template("dashboard.html", statement=statement, club=club)
+    return render_template("dashboard.html", statement=statement, club=club,
+                           printers=services().printer.summary(g.member.id))
 
 
 @bp.get("/me")

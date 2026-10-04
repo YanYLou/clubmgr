@@ -30,6 +30,7 @@ from domain.models import (
     InventoryTransaction,
     Member,
     Notification,
+    Printer,
     QuotaTransaction,
     Record,
     Reservation,
@@ -44,6 +45,7 @@ from domain.repositories import (
     InventoryTransactionRepository,
     MemberRepository,
     NotificationRepository,
+    PrinterRepository,
     QuotaTransactionRepository,
     RecordRepository,
     Repository,
@@ -502,3 +504,23 @@ class SQLiteNotificationRepo(SQLite3Repository[Notification], NotificationReposi
             "WHERE ref = ? AND read_at IS NULL ORDER BY id DESC LIMIT 1",
             (ref,),
         )
+
+
+class SQLitePrinterRepo(SQLite3Repository[Printer], PrinterRepository):
+    """打印机状态（阶段 3.3 新增）。"""
+
+    table = "printers"
+    entity_cls = Printer
+
+    def find_by_name(self, name: str) -> Printer | None:
+        return self._first(name=name)
+
+    def list_by_status(self, status: str) -> list[Printer]:
+        return self._query(
+            f"SELECT {self._columns} FROM printers WHERE status = ? ORDER BY id",
+            (status,),
+        )
+
+    def count_by_status(self, status: str) -> int:
+        return int(self._scalar(
+            "SELECT COUNT(*) FROM printers WHERE status = ?", (status,)))

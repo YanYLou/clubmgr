@@ -58,6 +58,8 @@ MATRIX: dict[str, frozenset[Role]] = {
     "manage_funds":    FULL,                      # 经费收支与贡献奖励
     "manage_users":    ADMINS,                    # 登录账号管理 + Web 维护页
     "manage_settings": ADMINS,                    # 全局配置（低库存阈值等，阶段 3.2）
+    "manage_printers": FULL | OPS,                # 标记打印机使用中 / 释放（阶段 3.3）
+    "repair_printers": FULL,                      # 标记维修中 / 修好、增删机器（阶段 3.3）
     "view_own":        EVERYONE,                  # 查看自己的额度与记录
     # 读权限：不同角色要干的活不同
     "view_members":    FULL | {Role.HR},          # 社员名册

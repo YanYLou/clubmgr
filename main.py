@@ -22,6 +22,7 @@ from domain.services import (
     FundService,
     MemberService,
     NotificationService,
+    PrinterService,
     QuotaService,
     RecordService,
     ReportService,
@@ -39,6 +40,7 @@ from infrastructure.repositories import (
     SQLiteInventoryRepo,
     SQLiteMemberRepo,
     SQLiteNotificationRepo,
+    SQLitePrinterRepo,
     SQLiteQuotaRepo,
     SQLiteRecordRepo,
     SQLiteReservationRepo,
@@ -74,6 +76,7 @@ def build_repositories(db: Database) -> SimpleNamespace:
         reservation=SQLiteReservationRepo(db),
         setting=SQLiteSettingRepo(db),
         notification=SQLiteNotificationRepo(db),
+        printer=SQLitePrinterRepo(db),
     )
 
 
@@ -105,6 +108,7 @@ def build_services(db: Database) -> Services:
         settings=settings,
         notification=notification,
         stock_alert=stock_alert,
+        printer=PrinterService(db, repos.member, repos.printer),
     )
 
 

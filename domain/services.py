@@ -29,6 +29,7 @@ from domain.models import (
     InventoryTransaction,
     Member,
     Notification,
+    Printer,
     QuotaTransaction,
     Record,
     Reservation,
@@ -44,6 +45,7 @@ from domain.repositories import (
     InventoryTransactionRepository,
     MemberRepository,
     NotificationRepository,
+    PrinterRepository,
     QuotaTransactionRepository,
     RecordRepository,
     ReservationRepository,
@@ -60,6 +62,8 @@ DAY_LABELS = {"mon": "周一", "wed": "周三", "fri": "周五"}
 RESERVATION_STATUSES = ("pending", "approved", "rejected", "cancelled")
 SETTING_LOW_STOCK = "low_stock_threshold"          # 全局配置键（阶段 3.2）
 DEFAULT_LOW_STOCK_THRESHOLD = 100.0                # 默认低库存阈值（克）
+PRINTER_STATUSES = ("idle", "in_use", "maintenance")          # 阶段 3.3
+PRINTER_STATUS_LABELS = {"idle": "空闲", "in_use": "使用中", "maintenance": "维修中"}
 _EDITABLE_MEMBER_FIELDS = frozenset(
     {"name", "qq", "student_id", "role", "status", "join_date", "note"}
 )
@@ -666,6 +670,158 @@ class StockAlertService(_Service):
         )
 
 
+class PrinterService(_Service):
+    """打印机状态（阶段 3.3）：谁在用、还有几台可用、哪台在维修。
+
+    规则（按选择题确认的答案）：
+
+    - 所有登录用户都能看（社员也要知道还有没有机器可用）；
+    - **使用中 / 释放**：老师自己用、运营代记、社长副社长都可以（``manage_printers``）；
+    - **维修中 / 修好**：社长、副社长、老师可以标（``repair_printers``），维修必须写原因；
+    - 增删 / 改名机器也算管理操作（``repair_printers``）；
+    - ``available_count()`` 给排班用：时间格容量 = 当时空闲的机器台数。
+    """
+
+    def __init__(self, db: TransactionManager, member_repo: MemberRepository,
+                 printer_repo: PrinterRepository) -> None:
+        super().__init__(db, member_repo)
+        self.printer_repo = printer_repo
+
+    # -- 查询 ---------------------------------------------------------------
+
+    def list_printers(self, operator_id: int) -> list[Printer]:
+        self._operator_only(operator_id)
+        return self.printer_repo._list()
+
+    def available_count(self, operator_id: int | None = None) -> int:
+        """空闲机器台数；不传 operator_id 时不做权限校验（排班容量内部用）。"""
+        if operator_id is not None:
+            self._operator_only(operator_id)
+        return self.printer_repo.count_by_status("idle")
+
+    def summary(self, operator_id: int) -> dict:
+        """给页面用：机器列表 + 谁在用 + 各状态台数。"""
+        printers = self.list_printers(operator_id)
+        return {
+            "printers": printers,
+            "names": self.member_repo.names_for(
+                [p.used_by for p in printers if p.used_by is not None]),
+            "available": sum(1 for p in printers if p.status == "idle"),
+            "in_use": sum(1 for p in printers if p.status == "in_use"),
+            "maintenance": sum(1 for p in printers if p.status == "maintenance"),
+        }
+
+    # -- 管理 ---------------------------------------------------------------
+
+    def add_printer(self, operator_id: int, name: str, *, model: str | None = None,
+                    note: str | None = None) -> Printer:
+        operator = self._operator(operator_id, "repair_printers")
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("打印机名字不能为空")
+        if self.printer_repo.find_by_name(name) is not None:
+            raise ValueError(f"打印机已存在: {name}")
+        with self.db.transaction():
+            return self.printer_repo._create(Printer(
+                name=name, model=model, status="idle", note=note,
+                updated_at=datetime.now(), updated_by=operator.id))
+
+    def update_printer(self, operator_id: int, printer_id: int, *,
+                       name: str | None = None, model: str | None = None,
+                       note: str | None = None) -> Printer:
+        operator = self._operator(operator_id, "repair_printers")
+        printer = self._printer(printer_id)
+        if name is not None:
+            name = name.strip()
+            if not name:
+                raise ValueError("打印机名字不能为空")
+            existing = self.printer_repo.find_by_name(name)
+            if existing is not None and existing.id != printer_id:
+                raise ValueError(f"打印机名字已被占用: {name}")
+
+        updated = replace(
+            printer,
+            name=name if name is not None else printer.name,
+            model=model if model is not None else printer.model,
+            note=note if note is not None else printer.note,
+            updated_at=datetime.now(), updated_by=operator.id)
+        with self.db.transaction():
+            self.printer_repo._update(updated)
+        return updated
+
+    def mark_in_use(self, operator_id: int, printer_id: int, *,
+                    member_id: int | None = None,
+                    expected_end: datetime | None = None,
+                    note: str | None = None) -> Printer:
+        """标记某台机器"使用中"（默认记在操作人自己名下，可代记）。"""
+        operator = self._operator(operator_id, "manage_printers")
+        printer = self._printer(printer_id)
+        if printer.status == "maintenance":
+            raise ValueError(f"{printer.name} 正在维修，先修好再用")
+
+        user = self._member(member_id) if member_id is not None else operator
+        updated = replace(printer, status="in_use", used_by=user.id,
+                          expected_end=expected_end,
+                          note=note if note is not None else printer.note,
+                          updated_at=datetime.now(), updated_by=operator.id)
+        with self.db.transaction():
+            self.printer_repo._update(updated)
+        return updated
+
+    def release(self, operator_id: int, printer_id: int, *,
+                note: str | None = None) -> Printer:
+        """用完释放：回到空闲。"""
+        operator = self._operator(operator_id, "manage_printers")
+        printer = self._printer(printer_id)
+        if printer.status != "in_use":
+            raise ValueError(
+                f"{printer.name} 当前是「{PRINTER_STATUS_LABELS[printer.status]}」，"
+                f"只有使用中的机器能释放")
+
+        updated = replace(printer, status="idle", used_by=None, expected_end=None,
+                          note=note if note is not None else printer.note,
+                          updated_at=datetime.now(), updated_by=operator.id)
+        with self.db.transaction():
+            self.printer_repo._update(updated)
+        return updated
+
+    def mark_maintenance(self, operator_id: int, printer_id: int, *,
+                         note: str) -> Printer:
+        """标记"维修中"（必须写原因）。"""
+        operator = self._operator(operator_id, "repair_printers")
+        text = _note_or_error(note, "标记维修")
+        printer = self._printer(printer_id)
+
+        updated = replace(printer, status="maintenance", used_by=None,
+                          expected_end=None, note=text,
+                          updated_at=datetime.now(), updated_by=operator.id)
+        with self.db.transaction():
+            self.printer_repo._update(updated)
+        return updated
+
+    def finish_maintenance(self, operator_id: int, printer_id: int, *,
+                           note: str | None = None) -> Printer:
+        """修好了：回到空闲。"""
+        operator = self._operator(operator_id, "repair_printers")
+        printer = self._printer(printer_id)
+        if printer.status != "maintenance":
+            raise ValueError(
+                f"{printer.name} 当前是「{PRINTER_STATUS_LABELS[printer.status]}」，"
+                f"只有维修中的机器能标记修好")
+
+        updated = replace(printer, status="idle", note=note or printer.note,
+                          updated_at=datetime.now(), updated_by=operator.id)
+        with self.db.transaction():
+            self.printer_repo._update(updated)
+        return updated
+
+    def _printer(self, printer_id: int) -> Printer:
+        printer = self.printer_repo._get(printer_id)
+        if printer is None:
+            raise ValueError(f"打印机不存在: {printer_id}")
+        return printer
+
+
 class ReportService(_Service):
     """额度单、库存、经费报表（只读，但同样校验权限）。"""
 
@@ -985,3 +1141,4 @@ class Services:
     settings: SettingsService
     notification: NotificationService
     stock_alert: StockAlertService
+    printer: PrinterService

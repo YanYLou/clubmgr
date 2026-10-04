@@ -23,6 +23,8 @@
 
 阶段 3.2 变更：新增 ``Setting``（全局配置，放低库存阈值）与 ``Notification``（站内通知）。
 结构版本升到 5。
+
+阶段 3.3 变更：新增 ``Printer``（3 台打印机与占用状态）。结构版本升到 6。
 """
 
 import datetime
@@ -178,3 +180,21 @@ class Notification:
     ref: Optional[str] = None         # 关联对象，例如 "filament:1"
     created_at: Optional[datetime.datetime] = None
     read_at: Optional[datetime.datetime] = None
+
+@dataclass
+class Printer:
+    """打印机（阶段 3.3 新增）。
+
+    状态：``idle`` 空闲 / ``in_use`` 使用中（``used_by`` + ``expected_end``）/
+    ``maintenance`` 维修中（``note`` 写原因）。运营据此知道还有几台可用。
+    """
+
+    id: Optional[int] = None
+    name: str = ""
+    model: Optional[str] = None
+    status: str = "idle"
+    used_by: Optional[int] = None
+    expected_end: Optional[datetime.datetime] = None
+    note: Optional[str] = None
+    updated_at: Optional[datetime.datetime] = None
+    updated_by: Optional[int] = None

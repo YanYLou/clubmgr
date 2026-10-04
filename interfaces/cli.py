@@ -324,6 +324,41 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--week", help="该周任意日期 YYYY-MM-DD（默认本周）")
     p.set_defaults(handler=_reservation_schedule)
 
+    # --- printer（阶段 3.3）-----------------------------------------------
+    printer = top.add_parser("printer", help="打印机（空闲 / 使用中 / 维修中）").add_subparsers(
+        dest="action", required=True)
+
+    p = printer.add_parser("list", help="打印机状态与可用台数")
+    p.set_defaults(handler=_printer_list)
+
+    p = printer.add_parser("add", help="新增打印机（社长 / 副社长 / 老师）")
+    p.add_argument("--name", required=True)
+    p.add_argument("--model")
+    p.add_argument("--note")
+    p.set_defaults(handler=_printer_add)
+
+    p = printer.add_parser("use", help="标记使用中（老师 / 运营 / 社长副社长）")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--member", help="使用人（学号 / 姓名 / id）；默认自己")
+    p.add_argument("--until", help="预计结束时间，例如 2026-10-04 17:40")
+    p.add_argument("--note")
+    p.set_defaults(handler=_printer_use)
+
+    p = printer.add_parser("release", help="用完释放（回到空闲）")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--note")
+    p.set_defaults(handler=_printer_release)
+
+    p = printer.add_parser("maintain", help="标记维修中（必须写原因）")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--note", required=True)
+    p.set_defaults(handler=_printer_maintain)
+
+    p = printer.add_parser("fixed", help="修好了，恢复空闲")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--note")
+    p.set_defaults(handler=_printer_fixed)
+
     # --- notify / settings（阶段 3.2）-------------------------------------
     notify = top.add_parser("notify", help="站内通知（低库存提醒等）").add_subparsers(
         dest="action", required=True)
@@ -377,6 +412,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _date(text: str | None) -> date | None:
     return date.fromisoformat(text) if text else None
+
+
+def _datetime(text: str | None):
+    """``2026-10-04 17:40`` 或 ISO 格式 → datetime；空串按 None。"""
+    from datetime import datetime
+    text = (text or "").strip()
+    return datetime.fromisoformat(text) if text else None
 
 
 def _operator(args, services):
@@ -761,6 +803,88 @@ def _reservation_schedule(args, services) -> Result:
                         for day, items in schedule["days"]}}
     return Result(f"排班表 · 周 {schedule['week_start']}",
                   ["活动日", "序号", "社员", "备注"], rows, payload)
+
+
+# ---------------------------------------------------------------------------
+# 打印机（阶段 3.3）
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PrinterRow:
+    id: int
+    name: str
+    model: str
+    status: str
+    used_by: str
+    expected_end: str
+    note: str
+
+
+def _printer_rows(services, summary) -> list[PrinterRow]:
+    from domain.services import PRINTER_STATUS_LABELS
+    return [PrinterRow(id=printer.id, name=printer.name, model=printer.model or "-",
+                       status=PRINTER_STATUS_LABELS[printer.status],
+                       used_by=summary["names"].get(printer.used_by, "-")
+                       if printer.used_by else "-",
+                       expected_end=_fmt(printer.expected_end),
+                       note=printer.note or "-")
+            for printer in summary["printers"]]
+
+
+def _printer_result(services, operator_id: int, title: str) -> Result:
+    summary = services.printer.summary(operator_id)
+    payload = {
+        "available": summary["available"], "in_use": summary["in_use"],
+        "maintenance": summary["maintenance"],
+        "printers": [{"id": p.id, "name": p.name, "status": p.status,
+                      "used_by": p.used_by, "expected_end": _fmt(p.expected_end),
+                      "note": p.note} for p in summary["printers"]],
+    }
+    return Result(f"{title}（空闲 {summary['available']} 台）",
+                  ["id", "名称", "型号", "状态", "谁在用", "预计结束", "备注"],
+                  [[str(row.id), row.name, row.model, row.status, row.used_by,
+                    row.expected_end, row.note] for row in _printer_rows(services, summary)],
+                  payload)
+
+
+def _printer_list(args, services) -> Result:
+    operator = _operator(args, services)
+    return _printer_result(services, operator.id, "打印机")
+
+
+def _printer_add(args, services) -> Result:
+    operator = _operator(args, services)
+    printer = services.printer.add_printer(operator.id, args.name,
+                                          model=args.model, note=args.note)
+    return _printer_result(services, operator.id, f"已新增打印机 {printer.name}")
+
+
+def _printer_use(args, services) -> Result:
+    operator = _operator(args, services)
+    target = _member(args, services, args.member) if args.member else None
+    printer = services.printer.mark_in_use(
+        operator.id, args.id, member_id=target.id if target else None,
+        expected_end=_datetime(args.until), note=args.note)
+    return _printer_result(services, operator.id, f"{printer.name} 已标记使用中")
+
+
+def _printer_release(args, services) -> Result:
+    operator = _operator(args, services)
+    printer = services.printer.release(operator.id, args.id, note=args.note)
+    return _printer_result(services, operator.id, f"{printer.name} 已释放")
+
+
+def _printer_maintain(args, services) -> Result:
+    operator = _operator(args, services)
+    printer = services.printer.mark_maintenance(operator.id, args.id, note=args.note)
+    return _printer_result(services, operator.id,
+                           f"{printer.name} 已标记维修中：{printer.note}")
+
+
+def _printer_fixed(args, services) -> Result:
+    operator = _operator(args, services)
+    printer = services.printer.finish_maintenance(operator.id, args.id, note=args.note)
+    return _printer_result(services, operator.id, f"{printer.name} 已修好")
 
 
 # ---------------------------------------------------------------------------

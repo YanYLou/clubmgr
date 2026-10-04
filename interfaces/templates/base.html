@@ -52,6 +52,7 @@
     <a href="{{ url_for('records.index') }}">{% if can('view_records') %}打印记录{% else %}我的打印{% endif %}</a>
     {% if can('write_record') %}<a href="{{ url_for('records.new') }}">记打印</a>{% endif %}
     {% if can('view_inventory') %}<a href="{{ url_for('filaments.index') }}">耗材</a>{% endif %}
+    <a href="{{ url_for('printers.index') }}">打印机</a>
     {% if can('view_all') %}<a href="{{ url_for('quota.index') }}">额度</a>{% endif %}
     {% if can('view_funds') %}<a href="{{ url_for('fund.index') }}">经费</a>{% endif %}
     {% if can('manage_users') %}<a href="{{ url_for('users.index') }}">账号</a>{% endif %}

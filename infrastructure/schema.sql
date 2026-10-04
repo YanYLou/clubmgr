@@ -1,6 +1,6 @@
 
 -- 建表脚本，只在空库上执行（见 infrastructure/db.py 的 _init_schema）。
--- 结构版本：5 —— 与 db.py 的 SCHEMA_VERSION 保持一致；改动本文件必须同步 +1。
+-- 结构版本：6 —— 与 db.py 的 SCHEMA_VERSION 保持一致；改动本文件必须同步 +1。
 
 CREATE TABLE members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,6 +145,23 @@ CREATE TABLE notifications (
     FOREIGN KEY (member_id) REFERENCES members(id)
 );
 CREATE INDEX ix_notifications_member ON notifications(member_id, read_at);
+
+-- 打印机（阶段 3.3）：社团 3 台机器，老师也会用；
+-- status：idle 空闲 / in_use 使用中（used_by + expected_end）/ maintenance 维修中
+CREATE TABLE printers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    model TEXT,
+    status TEXT NOT NULL DEFAULT 'idle',
+    used_by INTEGER,
+    expected_end TEXT,
+    note TEXT,
+    updated_at TEXT,
+    updated_by INTEGER,
+    FOREIGN KEY (used_by) REFERENCES members(id),
+    FOREIGN KEY (updated_by) REFERENCES members(id)
+);
+CREATE INDEX ix_printers_status ON printers(status);
 
 -- 预约（阶段 2.3 新增）：提交不设限，只有「已通过」才进排班表；
 -- 部分唯一索引保证同一天同一人最多一条已通过的排班（待审核 / 被驳回的不受限制）

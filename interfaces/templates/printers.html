@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}打印机{% endblock %}
+{% block body %}
+<div class="card">
+  <h2>打印机</h2>
+  <p class="num">
+    空闲 {{ summary.available }} 台 ·
+    使用中 {{ summary.in_use }} 台 ·
+    维修中 {{ summary.maintenance }} 台
+  </p>
+  <table>
+    <tr><th>id</th><th>名称</th><th>型号</th><th>状态</th><th>谁在用</th>
+        <th>预计结束</th><th>备注</th><th>操作</th></tr>
+    {% for printer in summary.printers %}
+      <tr>
+        <td>{{ printer.id }}</td>
+        <td>{{ printer.name }}</td>
+        <td>{{ printer.model or '-' }}</td>
+        <td class="{{ 'neg' if printer.status == 'maintenance' else '' }}">
+          {{ {'idle': '空闲', 'in_use': '使用中', 'maintenance': '维修中'}[printer.status] }}
+        </td>
+        <td>{{ summary.names.get(printer.used_by, '-') if printer.used_by else '-' }}</td>
+        <td>{{ printer.expected_end.strftime('%m-%d %H:%M') if printer.expected_end else '-' }}</td>
+        <td>{{ printer.note or '-' }}</td>
+        <td>
+          {% if printer.status == 'idle' %}
+            {% if can('manage_printers') %}
+            <form method="post" action="{{ url_for('printers.use', printer_id=printer.id) }}"
+                  class="inline">
+              <input name="member" placeholder="使用人（留空=自己）" style="width:9rem">
+              <input name="expected_end" type="datetime-local">
+              <button>使用中</button>
+            </form>
+            {% endif %}
+            {% if can('repair_printers') %}
+            <form method="post"
+                  action="{{ url_for('printers.maintenance', printer_id=printer.id) }}"
+                  class="inline">
+              <input name="note" placeholder="维修原因" required>
+              <button class="ghost">维修中</button>
+            </form>
+            {% endif %}
+          {% elif printer.status == 'in_use' %}
+            {% if can('manage_printers') %}
+            <form method="post" action="{{ url_for('printers.release', printer_id=printer.id) }}"
+                  class="inline">
+              <button class="ghost">释放</button>
+            </form>
+            {% endif %}
+            {% if can('repair_printers') %}
+            <form method="post"
+                  action="{{ url_for('printers.maintenance', printer_id=printer.id) }}"
+                  class="inline">
+              <input name="note" placeholder="维修原因" required>
+              <button class="ghost">转维修</button>
+            </form>
+            {% endif %}
+          {% else %}
+            {% if can('repair_printers') %}
+            <form method="post" action="{{ url_for('printers.fixed', printer_id=printer.id) }}"
+                  class="inline">
+              <input name="note" placeholder="修好说明（可选）">
+              <button>已修好</button>
+            </form>
+            {% endif %}
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="muted">还没有登记打印机</td></tr>
+    {% endfor %}
+  </table>
+  <p class="muted">
+    排班时"每格能排几个人"按当时空闲的机器台数算；老师在用机器时，运营1 也能看到还剩几台。
+  </p>
+</div>
+
+{% if can('repair_printers') %}
+<div class="card">
+  <h3>新增打印机</h3>
+  <form method="post" action="{{ url_for('printers.add') }}" class="inline">
+    <label>名称<input name="name" required placeholder="打印机 4"></label>
+    <label>型号<input name="model"></label>
+    <label>备注<input name="note"></label>
+    <button>新增</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

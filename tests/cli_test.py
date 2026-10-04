@@ -275,3 +275,34 @@ def test_cli_settings_set_requires_admin(cli):
     assert "权限" in err
 
 
+# ---------------------------------------------------------------------------
+# 打印机（阶段 3.3）
+# ---------------------------------------------------------------------------
+
+def test_cli_printer_flow(cli):
+    cli("member", "bootstrap", "--name", "社长", "--student-id", "10001")
+    cli("--operator", "10001", "member", "add", "--name", "王老师",
+        "--student-id", "T001", "--role", "teacher")
+
+    out = cli("--operator", "10001", "printer", "add", "--name", "打印机 1")
+    assert "已新增打印机" in out and "空闲 1 台" in out
+
+    out = cli("--operator", "T001", "printer", "use", "--id", "1",
+              "--until", "2026-10-04 17:40", "--note", "打教具")
+    assert "已标记使用中" in out and "使用中" in out
+
+    out = cli("--operator", "10001", "printer", "maintain", "--id", "1",
+              "--note", "喷头堵了")
+    assert "已标记维修中" in out
+
+    err = cli("--operator", "10001", "printer", "use", "--id", "1", expect_code=1)
+    assert "正在维修" in err
+
+    out = cli("--operator", "T001", "printer", "fixed", "--id", "1")
+    assert "已修好" in out and "空闲 1 台" in out
+
+    payload = json.loads(cli("--json", "--operator", "10001", "printer", "list"))
+    assert payload["available"] == 1
+    assert payload["printers"][0]["status"] == "idle"
+
+

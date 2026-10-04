@@ -7,6 +7,7 @@ from interfaces.views.filaments import bp as filaments_bp
 from interfaces.views.fund import bp as fund_bp
 from interfaces.views.members import bp as members_bp
 from interfaces.views.notifications import bp as notifications_bp
+from interfaces.views.printers import bp as printers_bp
 from interfaces.views.quota import bp as quota_bp
 from interfaces.views.records import bp as records_bp
 from interfaces.views.reservations import bp as reservations_bp
@@ -24,6 +25,7 @@ BLUEPRINTS = (
     admin_bp,
     reservations_bp,
     notifications_bp,
+    printers_bp,
 )
 
 

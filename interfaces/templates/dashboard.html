@@ -16,6 +16,29 @@
   </p>
 </div>
 
+{% if printers %}
+<div class="card">
+  <h3>打印机</h3>
+  <p>
+    空闲 <strong>{{ printers.available }}</strong> 台 ·
+    使用中 {{ printers.in_use }} 台 ·
+    维修中 {{ printers.maintenance }} 台
+  </p>
+  <table>
+    <tr><th>机器</th><th>状态</th><th>谁在用</th><th>预计结束</th></tr>
+    {% for printer in printers.printers %}
+      <tr>
+        <td>{{ printer.name }}</td>
+        <td>{{ {'idle': '空闲', 'in_use': '使用中', 'maintenance': '维修中'}[printer.status] }}</td>
+        <td>{{ printers.names.get(printer.used_by, '-') if printer.used_by else '-' }}</td>
+        <td>{{ printer.expected_end.strftime('%m-%d %H:%M') if printer.expected_end else '-' }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+  <p class="muted"><a href="{{ url_for('printers.index') }}">管理打印机 →</a></p>
+</div>
+{% endif %}
+
 {% if club %}
 <div class="grid">
   <div class="card">
