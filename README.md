@@ -18,7 +18,7 @@
 | 连接与事务 `infrastructure/db.py` | ✅ | 自动建目录、WAL、可嵌套事务（SAVEPOINT）、`close()` 守卫、结构版本校验 |
 | 泛型仓储 `SQLite3Repository` | ✅ | 反射 dataclass 字段生成 CRUD；读回时按类型注解还原 `Role` / `date` / `datetime` |
 | 具体仓储（13 个） | ✅ | 社员 / 打印 / 额度 / 耗材 / 库存 / 经费 / 贡献 / 预约 / 账号 / 配置 / 通知 / 打印机 |
-| 权限矩阵 `domain/permissions.py` | ✅ | 18 个动作；副社长分 1/2 号、`teacher` 与社长同级、两位运营权限共享 |
+| 权限矩阵 `domain/permissions.py` | ✅ | 19 个动作；副社长分 1/2 号、`teacher` 与社长同级、两位运营权限共享 |
 | 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印 / 耗材 / 经费 / 贡献 / 预约 / 报表 / 账号 / 配置 / 通知 / 余量告警 / 打印机 |
 | 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 + 体检 / 备份 / 导出 / 通知 / 配置 / 打印机 |
 | Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 各业务页面 + 通知页 + 打印机页 |
@@ -28,7 +28,7 @@
 | 装配 `main.py` | ✅ | `build_repositories` / `build_services` / `open_services` + CLI / Web 入口 |
 | 运维工具 | ✅ | `doctor` 体检、`backup` 热备份、`report export` 公示报表（Web 维护页也可用） |
 | 预约排期 `reservations` | ✅ | 谁都能提交，社长 / 副社长 / 运维审核通过后才进排班表（结构版本 4） |
-| 测试与 CI | ✅ | 154 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表、预约、通知、打印机；GitHub Actions 自动跑 |
+| 测试与 CI | ✅ | 163 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表、预约与紧急任务、通知、打印机；GitHub Actions 自动跑 |
 
 一句话：**日常运营闭环（社员 / 打印 / 额度 / 库存 / 经费 / 预约 / 公示 / 备份）都已经可用，
 命令行与 Web 双入口。**
@@ -96,12 +96,24 @@ python main.py --operator 10002 reservation reject --id 2 --note "当天名额�
 python main.py --operator 10005 reservation schedule
 python main.py --operator 10005 reservation mine
 python main.py --operator 10005 reservation cancel --id 1
+
+# 紧急任务（阶段 3.4）：提到本周并插到最前面；当天其他人自动顺延并收到通知
+python main.py --operator 10006 reservation urgent --id 3 --week 2026-10-07 --day wed ^
+    --note "学校下派的展板支架，必须本周做"
+
+# 挤掉某条已通过的排班（退回"待重排"并通知本人）、看待重排列表
+python main.py --operator 10006 reservation bump --id 2 --note "学校任务要占用周三"
+python main.py --operator 10006 reservation reschedule
 ```
 
 - 同一天同一人只能有一条**已通过**的排班（数据库部分唯一索引兜底），
   但**提交**不受限：被驳回或撤销后可以重新提交。
 - 审核通过时自动分配当天序号（也可手工指定），排班表按序号排列。
-- Web 端有同样的页面：导航「预约」→ 排班表 + 提交表单 + 我的预约 + 审核队列（有权限时）。
+- **紧急任务**（社长 / 副社长 / 老师 / 两位运营）：`urgent` 插队时当天其他人序号整体后移并各自收到
+  站内通知；`bump` 把别人挤掉 → 状态变"待重排"（页面上的「待重排」区可以重新排上）并通知本人。
+  两种操作都留痕（`urgent_by` / `urgent_reason` / `urgent_at`），排班表里显示［紧急］与原因。
+- Web 端有同样的页面：导航「预约」→ 排班表 + 提交表单 + 我的预约 + 审核队列，
+  有权限时还会显示「紧急任务」与「待重排」两个区块。
 
 ## 打印机
 
@@ -217,7 +229,7 @@ clubmgr/
 │   ├─ app.py                  # Flask 应用工厂
 │   ├─ views/                  # 12 个蓝图（认证/首页/社员/打印/耗材/额度/经费/预约/通知/打印机/账号/维护）
 │   └─ templates/              # Jinja 模板
-├─ tests/                      # pytest 测试（154 个用例）
+├─ tests/                      # pytest 测试（163 个用例）
 ├─ .github/workflows/tests.yml # CI：push / PR 自动跑测试
 └─ docs/                       # 设计文档与路线图
 ```
@@ -250,7 +262,7 @@ clubmgr/
 | `filaments` | 耗材目录 |
 | `inventory_transactions` | 库存流水 |
 | `fund_transactions` | 经费流水 |
-| `reservations` | 预约（`week_start` / `activity_day` / `order_no` / `status` / 审核人） |
+| `reservations` | 预约（`week_start` / `activity_day` / `order_no` / `status`（含"待重排"）/ 审核人 / 紧急留痕） |
 | `contributions` | 贡献 / 捐款与额度奖励 |
 | `users` | 登录账号（关联社员，口令 pbkdf2 哈希） |
 | `settings` | 全局配置（键值对，目前放低库存阈值） |
