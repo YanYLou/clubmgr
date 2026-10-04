@@ -154,7 +154,7 @@ class MemberService(_Service):
         name = (name or "").strip()
         if not name:
             raise ValueError("社员姓名不能为空")
-        role = Role(role)
+        role = Role.parse(role)
         if status not in MEMBER_STATUSES:
             raise ValueError(f"状态只能是 {MEMBER_STATUSES}，收到 {status!r}")
         if student_id is not None:
@@ -174,7 +174,7 @@ class MemberService(_Service):
         if unknown:
             raise ValueError(f"不可修改的字段: {sorted(unknown)}")
         if "role" in changes:
-            changes["role"] = Role(changes["role"])
+            changes["role"] = Role.parse(changes["role"])
         if "status" in changes and changes["status"] not in MEMBER_STATUSES:
             raise ValueError(f"状态只能是 {MEMBER_STATUSES}，收到 {changes['status']!r}")
         if "name" in changes:
@@ -221,7 +221,7 @@ class MemberService(_Service):
                      role: Role | str | None = None) -> list[Member]:
         self._operator(operator_id, "view_members")
         if role is not None:
-            return self.member_repo.list_by_role(Role(role))
+            return self.member_repo.list_by_role(Role.parse(role))
         if status is not None:
             return self.member_repo._list(status=status)
         return self.member_repo._list()

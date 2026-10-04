@@ -16,6 +16,10 @@
 
 阶段 2.3 变更：``Reservation`` 增加 ``reviewer_id`` / ``reviewed_at``；
 规则是"谁都能提交，社长 / 副社长 / 运维审核通过后才进排班表"。结构版本升到 4。
+
+阶段 3.1 变更（按选择题确认的答案）：``Role`` 拆出副社长1号 / 2号，新增 ``teacher``
+（社团老师，权限与社长同级），两位运营权限完全一致。旧值 ``vice_president`` 由
+:meth:`Role.parse` 兼容为副社长1号（`members.role` 是 TEXT，无需改表结构）。
 """
 
 import datetime
@@ -26,11 +30,27 @@ from typing import Optional
 
 class Role(str, Enum):
     PRESIDENT = "president"
-    VICE_PRESIDENT = "vice_president"
-    OP1 = "op1"
+    VICE_PRESIDENT_1 = "vice_president_1"     # 副社长1号（有管理页权限）
+    VICE_PRESIDENT_2 = "vice_president_2"
+    TEACHER = "teacher"                       # 社团老师：权限与社长同级
+    OP1 = "op1"                               # 运营1（与运营2 权限完全一致）
     OP2 = "op2"
     HR = "hr"
     MEMBER = "member"
+
+    @classmethod
+    def parse(cls, value) -> "Role":
+        """把字符串 / 旧值转成 Role。
+
+        兼容阶段 2.3 之前的 ``vice_president``（那时还没区分 1 号 / 2 号）：
+        统一当作副社长1号。
+        """
+        if isinstance(value, cls):
+            return value
+        text = str(value or "").strip().lower()
+        if text == "vice_president":
+            return cls.VICE_PRESIDENT_1
+        return cls(text)
 
 @dataclass
 class Member:

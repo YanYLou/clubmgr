@@ -73,7 +73,9 @@ def _coerce_value(value: Any, annotation: Any) -> Any:
 
     if isinstance(annotation, type):
         if issubclass(annotation, Enum):
-            return annotation(value)
+            # 枚举若提供 parse()（可兼容旧值，例如 vice_president → 副社长1号），优先用它
+            parser = getattr(annotation, "parse", None)
+            return parser(value) if callable(parser) else annotation(value)
         if annotation is bool:
             return bool(value)
         if annotation is date:

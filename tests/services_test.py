@@ -284,3 +284,35 @@ def test_member_statement_contains_records_and_quota(services, club):
 
     with pytest.raises(PermissionError):
         services.report.member_statement(club.op2.id, club.member.id)   # 非本人且无 view_all
+
+
+def test_new_roles_behave_as_configured(services, club):
+    """阶段 3.1：副社长1号/2号、老师、两位运营在服务层的实际行为。"""
+    vp1 = services.member.create_member(club.president.id, "副社长1号",
+                                        role=Role.VICE_PRESIDENT_1, student_id="10010")
+    vp2 = services.member.create_member(club.president.id, "副社长2号",
+                                        role="vice_president_2", student_id="10011")
+    teacher = services.member.create_member(club.president.id, "王老师",
+                                            role="teacher", student_id="T001")
+
+    # 管理页 / 账号页：社长、副社1、老师可以，副社2 不行
+    assert services.user.list_users(vp1.id) == []
+    assert services.user.list_users(teacher.id) == []
+    with pytest.raises(PermissionError):
+        services.user.list_users(vp2.id)
+
+    # 老师与社长同级：全社数据、经费都看得到
+    assert services.report.quota_report(teacher.id) is not None
+    assert services.report.fund_balance(teacher.id) == 0
+
+    # 副社长2号业务权限与 1 号一样（只是没有管理页）
+    assert services.report.quota_report(vp2.id) is not None
+
+    # 两位运营权限一致：运营2 能替别人提交预约，运营1 能记打印
+    op1 = services.member.create_member(club.president.id, "运营1",
+                                        role=Role.OP1, student_id="10012")
+    services.reservation.create(club.op2.id, activity_day="wed",
+                                week_start=date(2026, 10, 5), member_id=club.member.id)
+    services.record.record_print(op1.id, club.member.id, club.filament.id, 5)
+    assert services.report.balance_of(club.president.id,
+                                      club.member.id) == pytest.approx(195)

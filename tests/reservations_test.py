@@ -58,13 +58,19 @@ def test_duplicate_pending_is_rejected(services, club):
 
 def test_submitting_for_others_needs_schedule_permission(services, club, op1):
     with pytest.raises(PermissionError):
-        services.reservation.create(club.op2.id, activity_day="mon",
+        services.reservation.create(club.hr.id, activity_day="mon",
                                     week_start=MONDAY, member_id=club.member.id)
 
     reservation = services.reservation.create(op1.id, activity_day="mon",
                                               week_start=MONDAY, member_id=club.member.id)
     assert reservation.member_id == club.member.id      # 代录：受益人是社员
     assert reservation.operator_id == op1.id            # 提交人记运营1
+
+    # 阶段 3.1 起两位运营权限一致：运营2 也能代录
+    services.reservation.cancel(op1.id, reservation.id)
+    reserved_by_op2 = services.reservation.create(
+        club.op2.id, activity_day="mon", week_start=MONDAY, member_id=club.member.id)
+    assert reserved_by_op2.operator_id == club.op2.id
 
 
 # ---------------------------------------------------------------------------
