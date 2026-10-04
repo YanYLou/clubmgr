@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}注册账号{% endblock %}
+{% block body %}
+<div class="card">
+  <h2>注册账号</h2>
+  <p class="muted">
+    填好资料提交后，<strong>人事审核通过</strong>才能登录。学号请填真实学号（用于和名册核对）。
+  </p>
+  <form method="post" action="{{ url_for('auth.signup') }}">
+    <p><label>姓名 <input name="name" required value="{{ form.get('name', '') }}"></label></p>
+    <p><label>学号 <input name="student_id" required value="{{ form.get('student_id', '') }}"></label></p>
+    <p><label>QQ（可选）<input name="qq" value="{{ form.get('qq', '') }}"></label></p>
+    <p><label>账号名（至少 3 个字符）
+      <input name="username" required value="{{ form.get('username', '') }}"></label></p>
+    <p><label>口令（至少 6 位）
+      <input name="password" type="password" required></label></p>
+    <p><label>备注（可选，例如"高一 3 班"）<input name="note"
+      value="{{ form.get('note', '') }}"></label></p>
+    <p><button>提交注册</button></p>
+  </form>
+  <p class="muted">已经有账号了？<a href="{{ url_for('auth.login') }}">去登录</a></p>
+</div>
+{% endblock %}

@@ -273,6 +273,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note")
     p.set_defaults(handler=_user_add)
 
+    p = user.add_parser("signup", help="社员自助注册（待人事审核，无需 operator）")
+    p.add_argument("--name", required=True, help="姓名")
+    p.add_argument("--student-id", required=True, help="学号")
+    p.add_argument("--username", required=True, help="账号名（至少 3 个字符）")
+    p.add_argument("--password", required=True, help="口令（至少 6 位）")
+    p.add_argument("--qq")
+    p.add_argument("--note")
+    p.set_defaults(handler=_user_signup)
+
+    p = user.add_parser("pending", help="待审核的注册（人事 / 社长 / 副社长 / 老师）")
+    p.set_defaults(handler=_user_pending)
+
+    p = user.add_parser("approve", help="通过注册")
+    p.add_argument("--id", type=int, required=True, help="账号 id（见 user pending）")
+    p.set_defaults(handler=_user_approve)
+
+    p = user.add_parser("reject", help="驳回注册")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--note", help="驳回原因")
+    p.set_defaults(handler=_user_reject)
+
     p = user.add_parser("list", help="账号列表")
     p.set_defaults(handler=_user_list)
 
@@ -709,6 +730,48 @@ def _user_disable(args, services) -> Result:
     updated = services.user.disable(operator.id, user.id)
     return _table(f"已停用账号 {updated.username}",
                   [_user_row(services, updated)])
+
+
+# -- 自助注册（阶段 3.5）-----------------------------------------------------
+
+def _user_signup(args, services) -> Result:
+    """自助注册：不需要 operator（这是给社员自己用的入口）。"""
+    member, user = services.user.signup(
+        name=args.name, student_id=args.student_id, username=args.username,
+        password=args.password, qq=args.qq, note=args.note)
+    return _table(
+        f"注册已提交：{member.name}（账号 {user.username}，待人事审核）",
+        [_user_row(services, user)])
+
+
+def _user_pending(args, services) -> Result:
+    operator = _operator(args, services)
+    signups = services.user.pending_signups(operator.id)
+    rows = [[str(user.id), user.username, member.name, member.student_id or "-",
+             member.qq or "-", _fmt(member.join_date), member.note or "-"]
+            for user, member in signups]
+    payload = [{"user_id": user.id, "username": user.username,
+                "member_id": member.id, "name": member.name,
+                "student_id": member.student_id, "qq": member.qq,
+                "join_date": _fmt(member.join_date), "note": member.note}
+               for user, member in signups]
+    return Result(f"待审核的注册（{len(rows)} 条）",
+                  ["账号id", "账号", "姓名", "学号", "QQ", "提交日期", "备注"],
+                  rows, payload)
+
+
+def _user_approve(args, services) -> Result:
+    operator = _operator(args, services)
+    user, member = services.user.approve_signup(operator.id, args.id)
+    return _table(f"已通过 {member.name}（{user.username}）的注册，现在可以登录",
+                  [_user_row(services, user)])
+
+
+def _user_reject(args, services) -> Result:
+    operator = _operator(args, services)
+    user, member = services.user.reject_signup(operator.id, args.id, note=args.note)
+    return _table(f"已驳回 {member.name}（{user.username}）的注册",
+                  [_user_row(services, user)])
 
 
 def _report_export(args, services) -> Result:

@@ -9,8 +9,8 @@
     <button>登录</button>
   </form>
   <p class="muted">
-    还没有账号？让社长在「账号」页面创建，或用命令行建一个测试账号：<br>
-    <code>python main.py --operator 1 user add --username admin --password admin123 --member 1</code>
+    还没有账号？<a href="{{ url_for('auth.signup') }}">自己注册一个</a>（人事审核通过后就能登录），
+    或让社长 / 副社长1号在「账号」页面创建。
   </p>
 </div>
 {% endblock %}

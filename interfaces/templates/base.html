@@ -55,7 +55,7 @@
     <a href="{{ url_for('printers.index') }}">打印机</a>
     {% if can('view_all') %}<a href="{{ url_for('quota.index') }}">额度</a>{% endif %}
     {% if can('view_funds') %}<a href="{{ url_for('fund.index') }}">经费</a>{% endif %}
-    {% if can('manage_users') %}<a href="{{ url_for('users.index') }}">账号</a>{% endif %}
+    {% if can('manage_users') or can('approve_signup') %}<a href="{{ url_for('users.index') }}">账号</a>{% endif %}
     {% if can('manage_users') %}<a href="{{ url_for('admin.index') }}">维护</a>{% endif %}
     <a href="{{ url_for('notifications.index') }}">通知{% if unread_count() %}（{{ unread_count() }}）{% endif %}</a>
   </nav>

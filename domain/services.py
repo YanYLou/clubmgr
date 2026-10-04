@@ -55,7 +55,7 @@ from domain.repositories import (
 )
 from domain.security import MIN_PASSWORD_LENGTH, hash_password, verify_password
 
-MEMBER_STATUSES = ("active", "left")
+MEMBER_STATUSES = ("active", "left", "pending", "rejected")
 CONTRIBUTION_TYPES = ("money", "material")
 ACTIVITY_DAYS = ("mon", "wed", "fri")
 DAY_LABELS = {"mon": "周一", "wed": "周三", "fri": "周五"}
@@ -210,7 +210,8 @@ class MemberService(_Service):
 
     def get_member(self, operator_id: int, member_id: int) -> Member:
         operator = self._operator_only(operator_id)
-        if not can_view_member(operator.role, operator.id, member_id):
+        if not (can_view_member(operator.role, operator.id, member_id)
+                or can(operator.role, "view_members")):
             raise PermissionError(f"角色 {operator.role.value} 不能查看其他社员的信息")
         return self._member(member_id)
 
@@ -927,6 +928,19 @@ class UserService(_Service):
         """按 id 取账号（Web 会话恢复用）。"""
         return self.user_repo._get(user_id)
 
+    def login_problem(self, username: str, password: str) -> str | None:
+        """口令对但登不进去时，给出具体原因（阶段 3.5：待审核 / 被驳回 / 被停用）。"""
+        user = self.user_repo.find_by_username((username or "").strip())
+        if user is None or not verify_password(password or "", user.password_hash):
+            return None
+        if user.status == "pending":
+            return "账号还在等待人事审核，通过后就能登录"
+        if user.status == "rejected":
+            return "这次注册被驳回了，请联系人事"
+        if user.status == "disabled":
+            return "账号已被停用，请联系社长"
+        return None
+
     def find_user(self, token: str) -> User | None:
         """按账号名 / id 解析账号（CLI 用）。"""
         token = (token or "").strip()
@@ -987,6 +1001,92 @@ class UserService(_Service):
     def list_users(self, operator_id: int) -> list[User]:
         self._operator(operator_id, "manage_users")
         return self.user_repo._list()
+
+    # -- 自助注册（阶段 3.5）-------------------------------------------------
+
+    def signup(self, *, name: str, student_id: str, username: str, password: str,
+               qq: str | None = None, note: str | None = None) -> tuple[Member, User]:
+        """社员自助注册：同时建"待审核"的社员与账号，等人事审核通过。
+
+        这个入口对所有人开放（不需要 operator），所以校验从严：姓名 / 学号 / 账号 / 口令都必填，
+        学号与账号名都不能和已有的重复；审核前**不能登录**。
+        """
+        name = (name or "").strip()
+        student_id = (student_id or "").strip()
+        username = (username or "").strip()
+        if not name:
+            raise ValueError("姓名不能为空")
+        if not student_id:
+            raise ValueError("学号不能为空")
+        if len(username) < 3:
+            raise ValueError("账号名至少 3 个字符")
+        if len(password or "") < MIN_PASSWORD_LENGTH:
+            raise ValueError(f"口令至少 {MIN_PASSWORD_LENGTH} 位")
+
+        existing = self.member_repo.find_by_student_id(student_id)
+        if existing is not None:
+            raise ValueError(
+                f"学号 {student_id} 已经在名册里（{existing.name}）；如果是你本人，"
+                f"请联系人事帮你开通账号")
+        if self.user_repo.find_by_username(username) is not None:
+            raise ValueError(f"账号已存在: {username}")
+
+        with self.db.transaction():
+            member = self.member_repo._create(Member(
+                name=name, qq=qq, student_id=student_id, role=Role.MEMBER,
+                status="pending", join_date=_today(),
+                note=note or "自助注册"))
+            user = self.user_repo._create(User(
+                username=username, password_hash=hash_password(password),
+                member_id=member.id, status="pending", note="等待人事审核"))
+        return member, user
+
+    def pending_signups(self, operator_id: int) -> list[tuple[User, Member]]:
+        """待审核的注册列表（需要 ``approve_signup``）。"""
+        self._operator(operator_id, "approve_signup")
+        result: list[tuple[User, Member]] = []
+        for user in self.user_repo.list_by_status("pending"):
+            member = self.member_repo._get(user.member_id)
+            if member is not None:
+                result.append((user, member))
+        return result
+
+    def approve_signup(self, operator_id: int, user_id: int) -> tuple[User, Member]:
+        """通过注册：社员与账号一起转成 active，之后就能登录了。"""
+        operator = self._operator(operator_id, "approve_signup")
+        user, member = self._signup(user_id)
+        with self.db.transaction():
+            updated_member = replace(member, status="active")
+            self.member_repo._update(updated_member)
+            updated_user = replace(user, status="active",
+                                   note=f"注册已通过（审核人：{operator.name}）")
+            self.user_repo._update(updated_user)
+        return updated_user, updated_member
+
+    def reject_signup(self, operator_id: int, user_id: int, *,
+                      note: str | None = None) -> tuple[User, Member]:
+        """驳回注册：社员与账号都标成 rejected（保留记录，方便回查）。"""
+        operator = self._operator(operator_id, "approve_signup")
+        user, member = self._signup(user_id)
+        text = (note or "").strip() or "注册被驳回"
+        with self.db.transaction():
+            updated_member = replace(member, status="rejected",
+                                     note=f"{text}（审核人：{operator.name}）")
+            self.member_repo._update(updated_member)
+            updated_user = replace(user, status="rejected", note=text)
+            self.user_repo._update(updated_user)
+        return updated_user, updated_member
+
+    def _signup(self, user_id: int) -> tuple[User, Member]:
+        user = self.user_repo._get(user_id)
+        if user is None:
+            raise ValueError(f"账号不存在: {user_id}")
+        if user.status != "pending":
+            raise ValueError(f"账号 {user.username} 不是待审核状态（当前 {user.status}）")
+        member = self.member_repo._get(user.member_id)
+        if member is None:
+            raise ValueError(f"账号 {user.username} 没有关联社员")
+        return user, member
 
 
 # ---------------------------------------------------------------------------

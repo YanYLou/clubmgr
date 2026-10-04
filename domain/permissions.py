@@ -24,13 +24,15 @@
 | allow_overdraft / adjust_quota | ✅ | ✅ | ✅ | ✅ | | | |
 | purchase / manage_funds | ✅ | ✅ | ✅ | ✅ | | | |
 | **manage_users（管理页 / 账号页）** | ✅ | ✅ | | ✅ | | | |
+| **approve_signup（审核注册）** | ✅ | ✅ | ✅ | ✅ | | ✅ | |
 | view_own（自己的额度与记录） | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 三条业务拍板结论：
 
 - 额度不足时**允许透支**（余额可为负），但只有社长 / 副社长 / 老师能记（``allow_overdraft``）；
 - 管理页 / 账号页只给**社长、副社长1号、老师**（``manage_users``）；
-- **两位运营权限完全一致**（都归到 :data:`OPS`），保留两个角色名只是为了统计"谁做的"。
+- **两位运营权限完全一致**（都归到 :data:`OPS`），保留两个角色名只是为了统计"谁做的"；
+- **自助注册**由人事（或社长 / 副社长 / 老师）审核（``approve_signup``，阶段 3.5）。
 
 权限判断只在服务层做（``domain/services.py`` 调用 :func:`require`），接口层不重复判断。
 """
@@ -58,6 +60,7 @@ MATRIX: dict[str, frozenset[Role]] = {
     "purchase":        FULL,                      # 耗材入库 / 采购 / 新建耗材
     "manage_funds":    FULL,                      # 经费收支与贡献奖励
     "manage_users":    ADMINS,                    # 登录账号管理 + Web 维护页
+    "approve_signup":  FULL | {Role.HR},          # 审核自助注册（阶段 3.5，人事负责）
     "manage_settings": ADMINS,                    # 全局配置（低库存阈值等，阶段 3.2）
     "manage_printers": FULL | OPS,                # 标记打印机使用中 / 释放（阶段 3.3）
     "repair_printers": FULL,                      # 标记维修中 / 修好、增删机器（阶段 3.3）

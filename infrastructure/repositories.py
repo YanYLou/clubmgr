@@ -392,6 +392,12 @@ class SQLiteUserRepo(SQLite3Repository[User], UserRepository):
             (member_id,),
         )
 
+    def list_by_status(self, status: str) -> list[User]:
+        return self._query(
+            f"SELECT {self._columns} FROM users WHERE status = ? ORDER BY id",
+            (status,),
+        )
+
 
 class SQLiteReservationRepo(SQLite3Repository[Reservation], ReservationRepository):
     """预约仓储（阶段 2.3 新增）。

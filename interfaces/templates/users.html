@@ -1,6 +1,44 @@
 {% extends "base.html" %}
 {% block title %}账号{% endblock %}
 {% block body %}
+{% if signups %}
+<div class="card">
+  <h2>待审核的注册（{{ signups|length }} 条）</h2>
+  <p class="muted">
+    社员自助注册后会出现在这里；通过后账号立刻生效，驳回则保留记录但无法登录。
+  </p>
+  <table>
+    <tr><th>账号 id</th><th>账号</th><th>姓名</th><th>学号</th><th>QQ</th>
+        <th>提交时间</th><th>备注</th><th>通过 / 驳回</th></tr>
+    {% for user, member in signups %}
+      <tr>
+        <td>{{ user.id }}</td>
+        <td>{{ user.username }}</td>
+        <td>{{ member.name }}</td>
+        <td>{{ member.student_id or '-' }}</td>
+        <td>{{ member.qq or '-' }}</td>
+        <td>{{ member.join_date or '-' }}</td>
+        <td>{{ member.note or '-' }}</td>
+        <td>
+          <form method="post"
+                action="{{ url_for('users.approve_signup', user_id=user.id) }}"
+                class="inline">
+            <button>通过</button>
+          </form>
+          <form method="post"
+                action="{{ url_for('users.reject_signup', user_id=user.id) }}"
+                class="inline" onsubmit="return confirm('确认驳回这条注册？')">
+            <input name="note" placeholder="驳回原因">
+            <button class="ghost">驳回</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{% if manage %}
 <div class="card">
   <h2>登录账号</h2>
   <p class="muted">账号只用来证明"你是哪个社员"，权限仍然取自该社员的角色。</p>
@@ -49,4 +87,5 @@
     <button>创建</button>
   </form>
 </div>
+{% endif %}
 {% endblock %}

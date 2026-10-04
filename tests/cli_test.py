@@ -276,6 +276,50 @@ def test_cli_settings_set_requires_admin(cli):
 
 
 # ---------------------------------------------------------------------------
+# 自助注册（阶段 3.5）
+# ---------------------------------------------------------------------------
+
+def test_cli_signup_pending_approve(cli):
+    cli("member", "bootstrap", "--name", "社长", "--student-id", "10001")
+    cli("--operator", "10001", "member", "add", "--name", "人事",
+        "--student-id", "10010", "--role", "hr")
+    cli("--operator", "10001", "member", "add", "--name", "张三", "--student-id", "10005")
+
+    # 自助注册不需要 --operator（这是社员自己用的入口）
+    out = cli("user", "signup", "--name", "李四", "--student-id", "10008",
+              "--username", "lisi", "--password", "lisi123456", "--qq", "123456")
+    assert "注册已提交" in out and "待人事审核" in out and "pending" in out
+
+    out = cli("--operator", "10010", "user", "pending")
+    assert "李四" in out and "10008" in out and "123456" in out
+
+    # 通过之后账号是 active
+    assert "已通过 李四" in cli("--operator", "10010", "user", "approve", "--id", "1")
+
+    payload = json.loads(cli("--json", "--operator", "10001", "user", "list"))
+    assert any(u["username"] == "lisi" and u["status"] == "active" for u in payload)
+    assert cli("--operator", "10010", "user", "pending").count("李四") == 0
+
+
+def test_cli_signup_reject_and_permission(cli):
+    _club_for_reservations(cli)          # 社长 10001 / 张三 10005 / 运营2 10002
+    cli("--operator", "10001", "member", "add", "--name", "人事",
+        "--student-id", "10010", "--role", "hr")
+    cli("user", "signup", "--name", "李四", "--student-id", "10008",
+        "--username", "lisi", "--password", "lisi123456")
+
+    # 普通社员与运营都不能审核注册
+    err = cli("--operator", "10005", "user", "approve", "--id", "1", expect_code=1)
+    assert "权限" in err
+    err = cli("--operator", "10002", "user", "pending", expect_code=1)
+    assert "权限" in err
+
+    out = cli("--operator", "10010", "user", "reject", "--id", "1",
+              "--note", "不是本校学生")
+    assert "已驳回 李四" in out and "rejected" in out
+
+
+# ---------------------------------------------------------------------------
 # 打印机（阶段 3.3）
 # ---------------------------------------------------------------------------
 

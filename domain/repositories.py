@@ -53,6 +53,8 @@ class UserRepository(Repository[User]):                      # 阶段 2.2 新增
     def find_by_username(self, username: str) -> User | None: ...
     @abstractmethod
     def list_by_member(self, member_id: int) -> list[User]: ...
+    @abstractmethod
+    def list_by_status(self, status: str) -> list[User]: ...          # 阶段 3.5 新增
 
 class RecordRepository(Repository[Record]):
     @abstractmethod
