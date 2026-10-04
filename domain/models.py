@@ -6,6 +6,10 @@
 而不是 ``datetime.date``：写库不受影响，但 ``get_type_hints()`` /
 ``dataclasses.fields().type`` 会得到错误类型，读回时无法按类型还原。
 因此凡是名为 ``date`` 的字段，注解统一写成 ``datetime.date``。
+
+阶段 1 变更（按拍板结论）：``Record`` 去掉 ``is_charged`` / ``fee`` 两个字段
+（收费语义未定，先不在打印记录里记钱），新增 ``filament_id`` 外键，
+``filament_name`` 保留作为历史快照。结构版本同步升到 2，见 ``infrastructure/db.py``。
 """
 
 import datetime
@@ -38,12 +42,11 @@ class Record:
     id: Optional[int] = None
     member_id: int = 0          # 打印的社员
     printer_name: str = ""
-    filament_name: str = ""
-    consumption: float = 0.0
+    filament_id: int = 0        # 耗材，外键 filaments.id（阶段 1 新增）
+    filament_name: str = ""     # 历史快照：耗材改名不影响旧记录
+    consumption: float = 0.0    # 消耗，单位：克
     date: datetime.date = field(default_factory=date.today)
     operator_id: int = 0        # 记录人，运营2
-    is_charged: bool = False
-    fee: float = 0.0
     reservation_id: Optional[int] = None
     comments: Optional[str] = None
 

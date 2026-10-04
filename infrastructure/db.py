@@ -21,9 +21,16 @@ sqlite3.register_adapter(datetime, lambda dt: dt.isoformat())
 
 MEMORY = ":memory:"
 
+# 结构版本（阶段 1 新增）：与 schema.sql 顶部注释保持一致，改动表结构必须 +1。
+#   1 = 初始 8 张表
+#   2 = records 增加 filament_id、去掉 fee / is_charged，并补上索引
+SCHEMA_VERSION = 2
+
 class Database:
     def __init__(self, path: str | Path):
         path = str(path)
+        self.path = path
+
         # 阶段 0.1 新增：数据库文件所在目录不存在时先创建，
         # 否则 sqlite3 会抛 "unable to open database file"。
         if path != MEMORY:
@@ -44,26 +51,36 @@ class Database:
         self._init_schema()
 
     def _init_schema(self):
-        """建表：只在空库上执行 ``schema.sql``。
+        """建表：只在空库上执行 ``schema.sql``，并校验结构版本。
 
         阶段 0 修复（既有缺陷）：原来每次连接都无条件执行建表脚本，第二次连接
         一个已存在的数据库文件时会抛 ``table members already exists``
         （``CREATE TABLE`` 不带 ``IF NOT EXISTS``）。这里改成"库里已有表就跳过"。
 
-        注意：这只负责初始化。后续若要**修改**已有表结构，需要迁移脚本或重建
-        数据库文件，不能指望重跑 schema.sql。
+        阶段 1 新增：用 ``PRAGMA user_version`` 记录结构版本。打开结构过旧的库
+        时立刻给出明确报错，而不是等到查询时报 ``no such column``。
+        开发阶段改结构 = 删除数据库文件重建；正式的迁移脚本属于后续工作。
         """
         existing = self.conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' "
             "AND name NOT LIKE 'sqlite_%' LIMIT 1"
         ).fetchone()
-        if existing is not None:
+
+        if existing is None:
+            schema_path = Path(__file__).with_name("schema.sql")
+            schema_sql = schema_path.read_text(encoding="utf-8")
+            # 阶段 0.2 修改：autocommit 模式下 executescript 自身即落盘，无需再 commit。
+            self.conn.executescript(schema_sql)
+            self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             return
 
-        schema_path = Path(__file__).with_name("schema.sql")
-        schema_sql = schema_path.read_text(encoding="utf-8")
-        # 阶段 0.2 修改：autocommit 模式下 executescript 自身即落盘，无需再 commit。
-        self.conn.executescript(schema_sql)
+        version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+        if version != SCHEMA_VERSION:
+            raise RuntimeError(
+                f"数据库结构版本为 {version}，当前程序需要 {SCHEMA_VERSION}："
+                f"{self.path}\n开发阶段请删除该数据库文件后重新创建"
+                f"（数据需要保留时请先备份并手工迁移）。"
+            )
 
     @property
     def in_transaction(self) -> bool:

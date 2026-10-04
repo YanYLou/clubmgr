@@ -12,10 +12,11 @@
 import datetime
 from dataclasses import replace
 from datetime import date
-from typing import get_type_hints
+from typing import Optional, get_type_hints
 
 from domain.models import (
     Contribution,
+    Filament,
     FundTransaction,
     InventoryTransaction,
     Member,
@@ -24,7 +25,7 @@ from domain.models import (
     Role,
 )
 from infrastructure.db import Database
-from infrastructure.repositories import SQLite3Repository
+from infrastructure.repositories import SQLite3Repository, _coerce_value
 
 
 class MemberRepo(SQLite3Repository[Member]):
@@ -35,6 +36,11 @@ class MemberRepo(SQLite3Repository[Member]):
 class RecordRepo(SQLite3Repository[Record]):
     table = "records"
     entity_cls = Record
+
+
+class FilamentRepo(SQLite3Repository[Filament]):
+    table = "filaments"
+    entity_cls = Filament
 
 
 def test_member_role_and_date_are_restored():
@@ -69,30 +75,40 @@ def test_list_also_restores_types():
     db.close()
 
 
-def test_record_bool_and_float_are_restored():
+def test_record_date_and_float_are_restored():
     db = Database(":memory:")
     member_repo = MemberRepo(db)
+    filament_repo = FilamentRepo(db)
     record_repo = RecordRepo(db)
 
     with db.transaction():
         member = member_repo._create(Member(name="Alice"))
+        filament = filament_repo._create(Filament(name="PLA 白", material="PLA"))
         record_repo._create(Record(
             member_id=member.id,
             printer_name="P1",
-            filament_name="PLA 白",
+            filament_id=filament.id,
+            filament_name=filament.name,
             consumption=12.5,
             date=date(2026, 9, 1),
             operator_id=member.id,
-            is_charged=True,
-            fee=3.0,
         ))
 
     got = record_repo._list(member_id=member.id)[0]
-    assert got.is_charged is True                     # 原来是 1（int）
     assert got.date == date(2026, 9, 1)               # 原来是 "2026-09-01"
     assert isinstance(got.consumption, float)
     assert got.consumption == 12.5
+    assert got.filament_id == filament.id             # 阶段 1 新增的外键
     db.close()
+
+
+def test_coerce_value_bool_and_optional():
+    """模型里已没有 bool 字段（is_charged 已删），直接测通用还原函数。"""
+    assert _coerce_value(1, bool) is True
+    assert _coerce_value(0, bool) is False
+    assert _coerce_value(None, datetime.date) is None
+    assert _coerce_value("2026-09-01", Optional[datetime.date]) == date(2026, 9, 1)
+    assert _coerce_value("hr", Role) is Role.HR
 
 
 def test_null_optional_field_stays_none():

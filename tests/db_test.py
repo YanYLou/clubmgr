@@ -155,3 +155,34 @@ def test_reopen_existing_database_keeps_data(tmp_path):
         assert count == 1
     finally:
         again.close()
+
+
+def test_outdated_schema_version_is_rejected(tmp_path):
+    """阶段 1 新增：结构版本不符时明确报错，而不是等到查询报 no such column。"""
+
+    import pytest
+
+    from infrastructure.db import SCHEMA_VERSION, Database
+
+    db_path = tmp_path / "club.db"
+    db = Database(db_path)
+    db.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+    db.close()
+
+    with pytest.raises(RuntimeError) as excinfo:
+        Database(db_path)
+
+    assert "结构版本" in str(excinfo.value)
+
+
+def test_fresh_database_records_schema_version(tmp_path):
+    """阶段 1 新增：新建的库会写入当前结构版本。"""
+
+    from infrastructure.db import SCHEMA_VERSION, Database
+
+    db = Database(tmp_path / "club.db")
+    try:
+        version = db.conn.execute("PRAGMA user_version").fetchone()[0]
+        assert version == SCHEMA_VERSION
+    finally:
+        db.close()
