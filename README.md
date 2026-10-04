@@ -13,20 +13,21 @@
 
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
-| 领域模型 `domain/models.py` | ✅ | 9 个 dataclass（含登录账号 `User`）+ `Role` 枚举；`records` 用 `filament_id` 外键 |
-| 建表 `infrastructure/schema.sql` | ✅ | 9 张表 + 索引；额度 / 库存 / 经费全部走流水（结构版本 3） |
+| 领域模型 `domain/models.py` | ✅ | 11 个 dataclass（含 `User` / `Setting` / `Notification`）+ `Role` 枚举 |
+| 建表 `infrastructure/schema.sql` | ✅ | 11 张表 + 索引；额度 / 库存 / 经费全部走流水（结构版本 5） |
 | 连接与事务 `infrastructure/db.py` | ✅ | 自动建目录、WAL、可嵌套事务（SAVEPOINT）、`close()` 守卫、结构版本校验 |
-| 泛型仓储 `SQLite3Repository` | ✅ | 反射 dataclass 字段生成 CRUD；读回时按类型注解还原 `Role` / `date` / `bool` |
-| 具体仓储（8 个） | ✅ | `infrastructure/repositories.py`：社员 / 打印 / 额度 / 耗材 / 库存 / 经费 / 贡献 / 账号 |
-| 权限矩阵 `domain/permissions.py` | ✅ | 15 个动作；副社长分 1/2 号、`teacher` 与社长同级、两位运营权限共享 |
-| 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印（三表同事务）/ 耗材 / 经费 / 贡献 / 报表 / 账号 |
-| 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 + 体检 / 备份 / 导出 |
-| Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 社员 / 打印 / 耗材 / 额度 / 经费 / 预约 / 账号 / 维护页面 |
+| 泛型仓储 `SQLite3Repository` | ✅ | 反射 dataclass 字段生成 CRUD；读回时按类型注解还原 `Role` / `date` / `datetime` |
+| 具体仓储（12 个） | ✅ | 社员 / 打印 / 额度 / 耗材 / 库存 / 经费 / 贡献 / 预约 / 账号 / 配置 / 通知 |
+| 权限矩阵 `domain/permissions.py` | ✅ | 16 个动作；副社长分 1/2 号、`teacher` 与社长同级、两位运营权限共享 |
+| 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印（三表同事务）/ 耗材 / 经费 / 贡献 / 预约 / 报表 / 账号 / 配置 / 通知 / 余量告警 |
+| 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 + 体检 / 备份 / 导出 / 通知 / 配置 |
+| Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 各业务页面 + 通知页（未读角标与告警条） |
 | 登录与账号（`users` 表） | ✅ | pbkdf2 口令哈希 + 会话登录；账号权限仍取自关联社员的角色 |
+| 低库存告警 | ✅ | 全局阈值（`settings`）+ 出库跨阈值时给两位运营发站内通知（`notifications`） |
 | 装配 `main.py` | ✅ | `build_repositories` / `build_services` / `open_services` + CLI / Web 入口 |
 | 运维工具 | ✅ | `doctor` 体检、`backup` 热备份、`report export` 公示报表（Web 维护页也可用） |
 | 预约排期 `reservations` | ✅ | 谁都能提交，社长 / 副社长 / 运维审核通过后才进排班表（结构版本 4） |
-| 测试与 CI | ✅ | 127 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表、预约；GitHub Actions 自动跑 |
+| 测试与 CI | ✅ | 141 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表、预约、通知；GitHub Actions 自动跑 |
 
 一句话：**日常运营闭环（社员 / 打印 / 额度 / 库存 / 经费 / 预约 / 公示 / 备份）都已经可用，
 命令行与 Web 双入口。**
@@ -100,6 +101,24 @@ python main.py --operator 10005 reservation cancel --id 1
   但**提交**不受限：被驳回或撤销后可以重新提交。
 - 审核通过时自动分配当天序号（也可手工指定），排班表按序号排列。
 - Web 端有同样的页面：导航「预约」→ 排班表 + 提交表单 + 我的预约 + 审核队列（有权限时）。
+
+## 通知与全局配置
+
+耗材快用完时，平台会给**两位运营**发站内通知（跨过阈值才发一次，不刷屏）。
+
+```powershell
+python main.py --operator 10001 settings show                     # 看配置 + 低库存清单
+python main.py --operator 10001 settings set --key low_stock_threshold --value 100
+python main.py --operator 10006 notify list [--unread]            # 我的通知
+python main.py --operator 10006 notify read --id 1                # 标记已读
+python main.py --operator 10006 notify read-all
+```
+
+- 阈值是**全局**的（存在 `settings` 表，默认 100 克，填 `0` 表示关闭告警）；
+  Web 端在「维护」页可以直接改。
+- 触发条件是"出库前还在阈值之上、出库后掉到阈值之下"；同一耗材已有未读通知时不重复发。
+- Web 端登录后顶部会有告警条，导航里的「通知（N）」显示未读数，`/notifications` 可逐条或全部已读。
+- `python main.py doctor` 也会列出低于阈值的耗材，适合放进定时任务。
 
 ## 维护（体检 / 备份 / 公示）
 
@@ -177,9 +196,9 @@ clubmgr/
 │   ├─ cli.py                  # 命令行（含 doctor / backup / report export）
 │   ├─ reports.py              # 公示报表渲染（Markdown / CSV）
 │   ├─ app.py                  # Flask 应用工厂
-│   ├─ views/                  # 10 个蓝图（认证/首页/社员/打印/耗材/额度/经费/预约/账号/维护）
+│   ├─ views/                  # 11 个蓝图（认证/首页/社员/打印/耗材/额度/经费/预约/通知/账号/维护）
 │   └─ templates/              # Jinja 模板
-├─ tests/                      # pytest 测试（127 个用例）
+├─ tests/                      # pytest 测试（141 个用例）
 ├─ .github/workflows/tests.yml # CI：push / PR 自动跑测试
 └─ docs/                       # 设计文档与路线图
 ```
@@ -202,7 +221,7 @@ clubmgr/
 `view_funds`（经费余额与流水）。旧数据里的 `vice_president` 会被当作副社长1号
 （`Role.parse` 兼容）。
 
-## 数据模型（9 张表）
+## 数据模型（11 张表）
 
 | 表 | 语义 |
 | --- | --- |
@@ -215,6 +234,8 @@ clubmgr/
 | `reservations` | 预约（`week_start` / `activity_day` / `order_no` / `status` / 审核人） |
 | `contributions` | 贡献 / 捐款与额度奖励 |
 | `users` | 登录账号（关联社员，口令 pbkdf2 哈希） |
+| `settings` | 全局配置（键值对，目前放低库存阈值） |
+| `notifications` | 站内通知（`member_id` 是收件人，`ref` 指向关联对象） |
 
 ## 设计约定
 
