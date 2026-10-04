@@ -62,15 +62,19 @@
 **阶段 1 验收**（`tests/cli_test.py::test_phase1_acceptance_via_cli` 自动跑，也可手工执行）：
 建社员 → 学期初发额度 → 记录打印 → 额度 / 库存 / 经费报表。
 
-## 阶段 2 · 接口（🟡 进行中）
+## 阶段 2 · 接口与运维（🟡 只剩预约）
 
 | # | 任务 | 标记 | 提交 |
 | --- | --- | --- | --- |
 | 2.1 | **CLI**：`python main.py ...`，覆盖全部业务动作，`--json` 可脚本化 | ✅ `interfaces/cli.py` | `11523bc` |
 | 2.2a | **登录账号**：`users` 表 + pbkdf2 口令哈希 + `UserService`（结构版本 3） | ✅ `domain/security.py` · ✅ `interfaces/…` | `b5bc63c` |
-| 2.2b | **Web 界面**：应用工厂 + 8 个蓝图 + 11 个模板 + `main.py web` | ✅ `interfaces/app.py` · ✅ `interfaces/views/` · ✅ `interfaces/templates/` | `09b5056` |
-| 2.3 | `reservations` 预约排期（仓储 + 服务 + CLI 子命令 + 页面） | ❌ | — |
-| 2.4 | 备份脚本（`Connection.backup()` 热备份，按日期保留） | ❌ | — |
+| 2.2b | **Web 界面**：应用工厂 + 8 个蓝图 + 11 个模板 + `main.py web` | ✅ `interfaces/app.py` · ✅ `interfaces/views/` | `09b5056` |
+| 2.4 | **体检与热备份**：`doctor`（版本/完整性/外键/可疑数据）、`backup`（在线备份 + 校验 + 保留份数） | ✅ `infrastructure/backup.py` · ✅ CLI | `a4862e1` |
+| 2.5 | **公示报表与维护页**：`report export`（Markdown + CSV）、Web `/admin`（备份 + 下载）、CI | ✅ `interfaces/reports.py` · ✅ `interfaces/views/admin.py` · ✅ `.github/workflows/tests.yml` | `8bba930` |
+| 2.3 | `reservations` 预约排期（仓储 + 服务 + CLI + 页面） | ⏸️ 按你的要求先不做 | — |
+
+**MVP 到此可用**：社员 / 打印 / 额度 / 库存 / 经费 / 贡献 / 公示 / 备份 / 体检 全部打通，
+命令行与 Web 双入口，101 个测试 + CI。剩下的只有预约排期与"上生产"（换 WSGI 服务器）。
 
 Web 端要点：账号只是"证明你是哪个社员"，权限仍取自该社员的角色；会话里只放 `user_id`，
 每个请求重新取角色；SQLite 单连接跨线程 + 一把请求锁串行化；会话密钥取

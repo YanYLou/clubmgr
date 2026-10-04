@@ -13,21 +13,23 @@
 
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
-| 领域模型 `domain/models.py` | ✅ | 8 个 dataclass + `Role` 枚举；`records` 用 `filament_id` 外键（结构版本 2） |
-| 建表 `infrastructure/schema.sql` | ✅ | 8 张表 + 8 个索引；额度 / 库存 / 经费全部走流水 |
+| 领域模型 `domain/models.py` | ✅ | 9 个 dataclass（含登录账号 `User`）+ `Role` 枚举；`records` 用 `filament_id` 外键 |
+| 建表 `infrastructure/schema.sql` | ✅ | 9 张表 + 索引；额度 / 库存 / 经费全部走流水（结构版本 3） |
 | 连接与事务 `infrastructure/db.py` | ✅ | 自动建目录、WAL、可嵌套事务（SAVEPOINT）、`close()` 守卫、结构版本校验 |
 | 泛型仓储 `SQLite3Repository` | ✅ | 反射 dataclass 字段生成 CRUD；读回时按类型注解还原 `Role` / `date` / `bool` |
-| 具体仓储（7 个） | ✅ | `infrastructure/repositories.py`：社员 / 打印 / 额度 / 耗材 / 库存 / 经费 / 贡献 |
-| 权限矩阵 `domain/permissions.py` | ✅ | 11 个动作，含"额度不足只有社长/副社长能记" |
-| 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印（三表同事务）/ 耗材 / 经费 / 贡献 / 报表 |
-| 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 |
-| Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 社员 / 打印 / 耗材 / 额度 / 经费 / 账号页面 |
+| 具体仓储（8 个） | ✅ | `infrastructure/repositories.py`：社员 / 打印 / 额度 / 耗材 / 库存 / 经费 / 贡献 / 账号 |
+| 权限矩阵 `domain/permissions.py` | ✅ | 13 个动作，含"额度不足只有社长/副社长能记"与账号管理 |
+| 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印（三表同事务）/ 耗材 / 经费 / 贡献 / 报表 / 账号 |
+| 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 + 体检 / 备份 / 导出 |
+| Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 社员 / 打印 / 耗材 / 额度 / 经费 / 账号 / 维护页面 |
 | 登录与账号（`users` 表） | ✅ | pbkdf2 口令哈希 + 会话登录；账号权限仍取自关联社员的角色 |
 | 装配 `main.py` | ✅ | `build_repositories` / `build_services` / `open_services` + CLI / Web 入口 |
-| 测试 | ✅ | 83 个用例：数据层、仓储、权限、服务、CLI、Web |
-| 预约排期 `reservations` | ❌ | 表已建好，仓储与服务未写（等"一人一天能约几件"定下来） |
+| 运维工具 | ✅ | `doctor` 体检、`backup` 热备份、`report export` 公示报表（Web 维护页也可用） |
+| 测试与 CI | ✅ | 101 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表；GitHub Actions 自动跑 |
+| 预约排期 `reservations` | ❌ | 表已建好，仓储与服务未写（按你的要求先不做） |
 
-一句话：**额度、打印、库存、经费的闭环已经能用命令行完整操作；Web 界面与预约排期还没做。**
+一句话：**日常运营闭环（社员 / 打印 / 额度 / 库存 / 经费 / 公示 / 备份）都已经可用，
+命令行与 Web 双入口；只差预约排期没做。**
 进度与后续计划见 [`docs/roadmap.md`](docs/roadmap.md)。
 
 ## 快速开始
@@ -71,6 +73,23 @@ flask --app interfaces.app:create_app run --debug   # 等价写法（开发模�
 - 会话密钥优先读环境变量 `CLUBMGR_SECRET_KEY`，没有就在 `data/secret_key` 里生成一个并复用。
 - 服务是 Flask 开发服务器，只适合社团内网 / 本机使用；页面写入全部走服务层，
   权限、事务、额度规则与 CLI 完全一致。
+
+## 维护（体检 / 备份 / 公示）
+
+```powershell
+python main.py doctor                                  # 体检：结构版本、完整性、外键、可疑数据
+python main.py backup                                  # 热备份到 data/backups/，校验后保留最近 10 份
+python main.py backup --keep 30 --list                 # 保留 30 份 / 只看备份列表
+python main.py --operator 10001 report export --csv    # 公示报表（Markdown + 4 个 CSV）
+```
+
+- **热备份**：用 `sqlite3` 的在线备份 API，备份期间照常记账；备份后立刻校验完整性，
+  不合格的文件会删掉；恢复步骤见 `infrastructure/backup.py` 顶部注释。
+- **公示报表**：额度、库存、经费流水、贡献名单，默认写到 `data/reports/`，
+  Markdown 可直接贴到群里；CSV 用 `utf-8-sig`，Excel 打开不乱码。
+- **体检**：提示额度透支、库存为负、有社员却没有登录账号、重复发放学期额度等；
+  结构性异常（版本不符、完整性 / 外键问题）时退出码为 1，适合放进定时任务。
+- 社长也可以在 Web 的「维护」页面一键备份、下载公示报表。
 
 ## 命令行用法
 
@@ -125,13 +144,16 @@ clubmgr/
 ├─ infrastructure/             # 基础设施层
 │   ├─ db.py                   # 连接、PRAGMA、建表、可嵌套事务、结构版本
 │   ├─ repositories.py         # 泛型 SQLite 仓储 + 8 个具体仓储 + 类型还原
+│   ├─ backup.py               # 热备份、校验与保留策略
 │   └─ schema.sql              # 建表语句与索引
 ├─ interfaces/                 # 接口层
-│   ├─ cli.py                  # 命令行
+│   ├─ cli.py                  # 命令行（含 doctor / backup / report export）
+│   ├─ reports.py              # 公示报表渲染（Markdown / CSV）
 │   ├─ app.py                  # Flask 应用工厂
-│   ├─ views/                  # 8 个蓝图（auth/dashboard/members/records/filaments/quota/fund/users）
+│   ├─ views/                  # 9 个蓝图（认证/首页/社员/打印/耗材/额度/经费/账号/维护）
 │   └─ templates/              # Jinja 模板
-├─ tests/                      # pytest 测试（83 个用例）
+├─ tests/                      # pytest 测试（101 个用例）
+├─ .github/workflows/tests.yml # CI：push / PR 自动跑测试
 └─ docs/                       # 设计文档与路线图
 ```
 
