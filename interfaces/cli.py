@@ -25,7 +25,8 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from domain.models import Role
-from domain.services import ACTIVITY_DAYS, DAY_LABELS
+from domain.services import (ACTIVITY_DAYS, DAY_LABELS, DEFAULT_LOW_STOCK_THRESHOLD,
+                             SETTING_LOW_STOCK)
 from infrastructure.backup import (DEFAULT_KEEP, create_backup,
                                    default_backup_dir, list_backups)
 from infrastructure.db import SCHEMA_VERSION, Database
@@ -322,6 +323,33 @@ def build_parser() -> argparse.ArgumentParser:
     p = reservation.add_parser("schedule", help="排班表（已通过的预约）")
     p.add_argument("--week", help="该周任意日期 YYYY-MM-DD（默认本周）")
     p.set_defaults(handler=_reservation_schedule)
+
+    # --- notify / settings（阶段 3.2）-------------------------------------
+    notify = top.add_parser("notify", help="站内通知（低库存提醒等）").add_subparsers(
+        dest="action", required=True)
+
+    p = notify.add_parser("list", help="我的通知")
+    p.add_argument("--unread", action="store_true", help="只看未读")
+    p.set_defaults(handler=_notify_list)
+
+    p = notify.add_parser("read", help="标记某条已读")
+    p.add_argument("--id", type=int, required=True)
+    p.set_defaults(handler=_notify_read)
+
+    p = notify.add_parser("read-all", help="全部标记已读")
+    p.set_defaults(handler=_notify_read_all)
+
+    settings = top.add_parser("settings", help="全局配置（低库存阈值等）").add_subparsers(
+        dest="action", required=True)
+
+    p = settings.add_parser("show", help="查看配置与低库存清单")
+    p.set_defaults(handler=_settings_show)
+
+    p = settings.add_parser("set", help="修改配置")
+    p.add_argument("--key", default=SETTING_LOW_STOCK, help=f"默认 {SETTING_LOW_STOCK}")
+    p.add_argument("--value", required=True, help="新值（低库存阈值为克数，0 = 关闭告警）")
+    p.add_argument("--note")
+    p.set_defaults(handler=_settings_set)
 
     # --- 维护（阶段 2.4）--------------------------------------------------
     p = top.add_parser("doctor", help="体检：结构版本、完整性、外键与可疑数据")
@@ -736,6 +764,75 @@ def _reservation_schedule(args, services) -> Result:
 
 
 # ---------------------------------------------------------------------------
+# 通知与配置（阶段 3.2）
+# ---------------------------------------------------------------------------
+
+@dataclass
+class NotificationRow:
+    id: int
+    created_at: str
+    type: str
+    title: str
+    status: str
+
+
+def _notification_rows(notifications) -> list[NotificationRow]:
+    return [NotificationRow(id=item.id, created_at=_fmt(item.created_at),
+                            type=item.type, title=item.title,
+                            status="已读" if item.read_at is not None else "未读")
+            for item in notifications]
+
+
+def _notify_list(args, services) -> Result:
+    operator = _operator(args, services)
+    items = services.notification.list_for(operator.id, unread_only=args.unread)
+    unread = services.notification.unread_count(operator.id)
+    payload = [{"id": item.id, "type": item.type, "title": item.title,
+                "body": item.body, "ref": item.ref, "created_at": _fmt(item.created_at),
+                "read": item.read_at is not None} for item in items]
+    return _table(f"通知（{len(items)} 条，未读 {unread} 条）",
+                  _notification_rows(items), payload=payload)
+
+
+def _notify_read(args, services) -> Result:
+    operator = _operator(args, services)
+    notification = services.notification.mark_read(operator.id, args.id)
+    return _table("已标记为已读", _notification_rows([notification]))
+
+
+def _notify_read_all(args, services) -> Result:
+    operator = _operator(args, services)
+    count = services.notification.mark_all_read(operator.id)
+    return Result(f"已把 {count} 条通知标为已读", payload={"marked": count})
+
+
+def _settings_show(args, services) -> Result:
+    operator = _operator(args, services)
+    items = services.settings.all(operator.id)
+    low = services.stock_alert.low_stock()
+    threshold = services.settings.low_stock_threshold()
+
+    rows = [[item.key, item.value, item.note or "-"] for item in items]
+    extra = ["", f"当前低库存阈值：{threshold:g} 克（0 = 关闭告警）",
+             f"低于阈值的耗材：{len(low)} 种"]
+    extra += [f"- {filament.name} 剩 {stock:g} 克" for filament, stock in low]
+    payload = {"settings": [asdict(item) for item in items],
+               "low_stock_threshold": threshold,
+               "low_stock": [{"filament_id": filament.id, "name": filament.name,
+                              "stock": stock} for filament, stock in low]}
+    return Result("全局配置", ["键", "值", "说明"], rows, payload, extra)
+
+
+def _settings_set(args, services) -> Result:
+    operator = _operator(args, services)
+    setting = services.settings.set(operator.id, args.key, args.value, note=args.note)
+    return Result(f"已更新配置：{setting.key} = {setting.value}",
+                  ["键", "值", "说明"],
+                  [[setting.key, setting.value, setting.note or "-"]],
+                  {"key": setting.key, "value": setting.value})
+
+
+# ---------------------------------------------------------------------------
 # 维护命令（阶段 2.4）：体检与备份
 # ---------------------------------------------------------------------------
 
@@ -799,6 +896,28 @@ def _doctor(args, services) -> Result:
         if duplicated:
             warnings.append("重复发放过学期额度："
                             + "，".join(f"{name}（{times} 次）" for name, times in duplicated))
+
+        # 阶段 3.2：低库存阈值提示（旧库没有 settings 表就跳过）
+        has_settings = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'"
+        ).fetchone()
+        if has_settings:
+            row = connection.execute(
+                "SELECT value FROM settings WHERE key = ?", (SETTING_LOW_STOCK,)).fetchone()
+            try:
+                threshold = float(row[0]) if row is not None else DEFAULT_LOW_STOCK_THRESHOLD
+            except (TypeError, ValueError):
+                threshold = DEFAULT_LOW_STOCK_THRESHOLD
+
+            if threshold > 0:
+                low = connection.execute(
+                    "SELECT f.name, COALESCE(SUM(i.amount), 0) AS stock FROM filaments f "
+                    "LEFT JOIN inventory_transactions i ON i.filament_id = f.id "
+                    "GROUP BY f.id HAVING stock < ? ORDER BY stock", (threshold,)).fetchall()
+                if low:
+                    warnings.append(
+                        f"低于低库存阈值（{threshold:g} 克）："
+                        + "，".join(f"{name} {stock:g} 克" for name, stock in low))
     finally:
         connection.close()
 

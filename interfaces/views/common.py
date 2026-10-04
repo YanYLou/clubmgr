@@ -25,10 +25,16 @@ def parse_date(text: str | None) -> date | None:
     return date.fromisoformat(text) if text else None
 
 
+def unread_count() -> int:
+    """当前登录人的未读通知数（阶段 3.2；模板里用于告警条与导航角标）。"""
+    return int(g.get("unread", 0) or 0)
+
+
 def load_session_identity() -> None:
     """每个请求开头恢复当前账号与社员；角色 / 状态改了立刻生效。"""
     g.user = None
     g.member = None
+    g.unread = 0
     user_id = session.get("user_id")
     if user_id is None:
         return
@@ -41,6 +47,7 @@ def load_session_identity() -> None:
         session.clear()
         return
     g.user, g.member = user, member
+    g.unread = services().notification.unread_count(member.id)
 
 
 def login_required(view):

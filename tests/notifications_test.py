@@ -151,3 +151,68 @@ def test_low_stock_alert_rolls_back_with_the_print(services, club, monkeypatch):
 
     assert services.record.list_records(club.president.id) == []
     assert services.notification.list_for(club.op2.id) == []
+
+
+# ---------------------------------------------------------------------------
+# Web 页面
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def web(tmp_path):
+    from interfaces.app import create_app
+
+    app = create_app(str(tmp_path / "club.db"), secret_key="test-secret")
+    services = app.config["SERVICES"]
+
+    president = services.member.bootstrap("社长", student_id="10001")
+    op2 = services.member.create_member(president.id, "运营2",
+                                        role=Role.OP2, student_id="10002")
+    filament = services.filament.create_filament(president.id, "PLA 白")
+    services.quota.init_semester(president.id, 200)
+    services.settings.set(president.id, SETTING_LOW_STOCK, 100)
+    services.filament.purchase(president.id, filament.id, 150, note="入库")
+
+    services.user.add_user(president.id, "admin", "admin123", president.id)
+    services.user.add_user(president.id, "op2user", "op2pass123", op2.id)
+    return app
+
+
+def _text(response) -> str:
+    return response.data.decode("utf-8")
+
+
+def test_web_banner_and_notifications_page(web):
+    services = web.config["SERVICES"]
+    op2 = services.member.find_by_token("10002")
+    filament = services.filament.find_by_name(op2.id, "PLA 白")
+    services.record.record_print(op2.id, op2.id, filament.id, 90)      # 跨过阈值
+
+    client = web.test_client()
+    client.post("/login", data={"username": "op2user", "password": "op2pass123"})
+
+    home = _text(client.get("/"))
+    assert "你有 1 条未读通知" in home
+    assert "通知（1）" in home
+
+    page = _text(client.get("/notifications"))
+    assert "耗材快用完了" in page and "只剩 60 克" in page
+
+    client.post("/notifications/1/read")
+    assert "你有 1 条未读通知" not in _text(client.get("/"))
+
+
+def test_web_admin_can_set_low_stock_threshold(web):
+    client = web.test_client()
+    client.post("/login", data={"username": "admin", "password": "admin123"})
+
+    body = _text(client.post("/admin/low-stock", data={"threshold": "40"},
+                             follow_redirects=True))
+    assert "低库存阈值已设为 40 克" in body
+    assert web.config["SERVICES"].settings.low_stock_threshold() == 40
+
+    # 运营2 不在管理档，改不了
+    op_client = web.test_client()
+    op_client.post("/login", data={"username": "op2user", "password": "op2pass123"})
+    body = _text(op_client.post("/admin/low-stock", data={"threshold": "30"},
+                                follow_redirects=True))
+    assert "没有权限" in body

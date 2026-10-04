@@ -42,4 +42,26 @@
     要 CSV（Excel 直接打开）：<code>python main.py --operator &lt;社长&gt; report export --csv</code>
   </p>
 </div>
+
+<div class="card">
+  <h3>低库存告警</h3>
+  <form method="post" action="{{ url_for('admin.low_stock') }}" class="inline">
+    <label>低于多少克提醒（0 = 关闭告警）
+      <input name="threshold" type="number" step="1" min="0" value="{{ threshold|num }}">
+    </label>
+    <button>保存</button>
+  </form>
+  <p class="muted">打印出库跨过这个阈值时，会给两位运营（运营1 / 运营2）各发一条站内通知。</p>
+  <table>
+    <tr><th>当前低于阈值的耗材</th><th>剩余(克)</th></tr>
+    {% for filament, stock in low_stock %}
+      <tr>
+        <td>{{ filament.name }}</td>
+        <td class="{{ 'neg' if stock < 0 else '' }}">{{ stock|num }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="2" class="muted">没有低于阈值的耗材</td></tr>
+    {% endfor %}
+  </table>
+</div>
 {% endblock %}

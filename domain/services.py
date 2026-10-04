@@ -420,6 +420,11 @@ class FilamentService(_Service):
         self._operator(operator_id, "view_inventory")
         return self.filament_repo._list()
 
+    def find_by_name(self, operator_id: int, name: str) -> Filament | None:
+        """按名字精确查找耗材（阶段 3.2 新增；需要 view_inventory）。"""
+        self._operator(operator_id, "view_inventory")
+        return self.filament_repo.find_by_name(name)
+
 
 # ---------------------------------------------------------------------------
 # 经费

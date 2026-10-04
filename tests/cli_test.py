@@ -236,3 +236,42 @@ def test_cli_reservation_reject_and_json(cli):
     assert payload["days"]["mon"] == []            # 被驳回的不进排班表
 
 
+# ---------------------------------------------------------------------------
+# 通知与全局配置（阶段 3.2）
+# ---------------------------------------------------------------------------
+
+def test_cli_settings_and_low_stock_notification(cli):
+    _club_for_reservations(cli)
+    cli("--operator", "10001", "filament", "add", "--name", "PLA 白")
+    cli("--operator", "10001", "quota", "init", "--amount", "200")
+
+    # 阈值默认 100 克；这里显式设一次并确认能读回
+    out = cli("--operator", "10001", "settings", "set",
+              "--key", "low_stock_threshold", "--value", "100")
+    assert "已更新配置" in out
+    assert "低库存阈值：100 克" in cli("--operator", "10001", "settings", "show")
+
+    # 入库 150 → 打印 90：跨过阈值 → 运营2 收到站内通知
+    cli("--operator", "10001", "filament", "purchase",
+        "--filament", "PLA 白", "--grams", "150")
+    cli("--operator", "10002", "record", "print", "--member", "10005",
+        "--filament", "PLA 白", "--grams", "90")
+
+    out = cli("--operator", "10002", "notify", "list")
+    assert "low_stock" in out and "只剩 60 克" in out and "未读 1 条" in out
+
+    assert "已标记为已读" in cli("--operator", "10002", "notify", "read", "--id", "1")
+    assert "未读 0 条" in cli("--operator", "10002", "notify", "list")
+
+    # 体检也会提示低库存
+    assert "低于低库存阈值" in cli("doctor")
+
+
+def test_cli_settings_set_requires_admin(cli):
+    _club_for_reservations(cli)
+
+    err = cli("--operator", "10002", "settings", "set",
+              "--key", "low_stock_threshold", "--value", "50", expect_code=1)
+    assert "权限" in err
+
+

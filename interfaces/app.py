@@ -58,7 +58,7 @@ def create_app(db_path: str | Path | None = None,
         Database(app.config["DB_PATH"], check_same_thread=False))
 
     from interfaces.views import register_blueprints
-    from interfaces.views.common import can, load_session_identity
+    from interfaces.views.common import can, load_session_identity, unread_count
 
     register_blueprints(app)
 
@@ -73,7 +73,7 @@ def create_app(db_path: str | Path | None = None,
         lock.release()
 
     app.before_request(load_session_identity)
-    app.context_processor(lambda: {"can": can})
+    app.context_processor(lambda: {"can": can, "unread_count": unread_count})
     app.jinja_env.filters["num"] = _fmt_number
     return app
 

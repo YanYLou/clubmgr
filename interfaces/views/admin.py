@@ -12,6 +12,7 @@ from flask import (Blueprint, current_app, flash, g, redirect,
 
 from infrastructure.backup import (create_backup, default_backup_dir,
                                    list_backups)
+from domain.services import SETTING_LOW_STOCK
 from interfaces.reports import collect, render_markdown
 from interfaces.views.common import handles_errors, login_required, services
 
@@ -33,7 +34,23 @@ def index():
     backups = [{"name": path.name, "size": f"{path.stat().st_size / 1024:.1f} KB",
                 "path": str(path)} for path in reversed(list_backups(out_dir))]
     return render_template("admin.html", db_path=_db_path(),
-                           backup_dir=str(out_dir), backups=backups)
+                           backup_dir=str(out_dir), backups=backups,
+                           threshold=services().settings.low_stock_threshold(),
+                           low_stock=services().stock_alert.low_stock())
+
+
+@bp.post("/low-stock")
+@login_required
+@handles_errors
+def low_stock():
+    """设置低库存阈值（阶段 3.2）：0 表示关闭告警。"""
+    value = float(request.form.get("threshold") or 0)
+    if value < 0:
+        raise ValueError("阈值不能为负（0 表示关闭告警）")
+    services().settings.set(g.member.id, SETTING_LOW_STOCK, value,
+                            note="低库存阈值（克），0 = 关闭告警")
+    flash(f"低库存阈值已设为 {value:g} 克", "ok")
+    return redirect(url_for("admin.index"))
 
 
 @bp.post("/backup")
