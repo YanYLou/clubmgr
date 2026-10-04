@@ -21,15 +21,15 @@
 | 权限矩阵 `domain/permissions.py` | ✅ | 13 个动作，含"额度不足只有社长/副社长能记"与账号管理 |
 | 业务服务 `domain/services.py` | ✅ | 社员 / 额度 / 打印（三表同事务）/ 耗材 / 经费 / 贡献 / 报表 / 账号 |
 | 命令行 `interfaces/cli.py` | ✅ | `python main.py ...`，覆盖全部业务动作 + 体检 / 备份 / 导出 |
-| Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 社员 / 打印 / 耗材 / 额度 / 经费 / 账号 / 维护页面 |
+| Web 界面 `interfaces/app.py` + `interfaces/views/` | ✅ | 登录 + 首页概览 + 社员 / 打印 / 耗材 / 额度 / 经费 / 预约 / 账号 / 维护页面 |
 | 登录与账号（`users` 表） | ✅ | pbkdf2 口令哈希 + 会话登录；账号权限仍取自关联社员的角色 |
 | 装配 `main.py` | ✅ | `build_repositories` / `build_services` / `open_services` + CLI / Web 入口 |
 | 运维工具 | ✅ | `doctor` 体检、`backup` 热备份、`report export` 公示报表（Web 维护页也可用） |
-| 测试与 CI | ✅ | 101 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表；GitHub Actions 自动跑 |
-| 预约排期 `reservations` | ❌ | 表已建好，仓储与服务未写（按你的要求先不做） |
+| 预约排期 `reservations` | ✅ | 谁都能提交，社长 / 副社长 / 运维审核通过后才进排班表（结构版本 4） |
+| 测试与 CI | ✅ | 123 个用例：数据层、仓储、权限、服务、CLI、Web、备份、报表、预约；GitHub Actions 自动跑 |
 
-一句话：**日常运营闭环（社员 / 打印 / 额度 / 库存 / 经费 / 公示 / 备份）都已经可用，
-命令行与 Web 双入口；只差预约排期没做。**
+一句话：**日常运营闭环（社员 / 打印 / 额度 / 库存 / 经费 / 预约 / 公示 / 备份）都已经可用，
+命令行与 Web 双入口。**
 进度与后续计划见 [`docs/roadmap.md`](docs/roadmap.md)。
 
 ## 快速开始
@@ -73,6 +73,33 @@ flask --app interfaces.app:create_app run --debug   # 等价写法（开发模�
 - 会话密钥优先读环境变量 `CLUBMGR_SECRET_KEY`，没有就在 `data/secret_key` 里生成一个并复用。
 - 服务是 Flask 开发服务器，只适合社团内网 / 本机使用；页面写入全部走服务层，
   权限、事务、额度规则与 CLI 完全一致。
+
+## 预约（提交 → 审核 → 排班）
+
+规则：**谁都能提交**预约，**只有社长 / 副社长 / 运维（运营1、运营2）审核通过后**才会进入排班表。
+
+```powershell
+# 社员提交（周三，填本周任意一天即可，自动归一到周一）
+python main.py --operator 10005 reservation add --day wed --week 2026-10-07 --note "打手办"
+
+# 运维代录（替别人提交需要预约安排权限）
+python main.py --operator 10007 reservation add --day mon --member 10005 --note "群里报的名"
+
+# 审核队列 → 通过（可指定序号）或驳回（写原因）
+python main.py --operator 10002 reservation pending
+python main.py --operator 10002 reservation approve --id 1
+python main.py --operator 10002 reservation reject --id 2 --note "当天名额满了"
+
+# 排班表（所有人可看）与我的预约
+python main.py --operator 10005 reservation schedule
+python main.py --operator 10005 reservation mine
+python main.py --operator 10005 reservation cancel --id 1
+```
+
+- 同一天同一人只能有一条**已通过**的排班（数据库部分唯一索引兜底），
+  但**提交**不受限：被驳回或撤销后可以重新提交。
+- 审核通过时自动分配当天序号（也可手工指定），排班表按序号排列。
+- Web 端有同样的页面：导航「预约」→ 排班表 + 提交表单 + 我的预约 + 审核队列（有权限时）。
 
 ## 维护（体检 / 备份 / 公示）
 
@@ -150,7 +177,7 @@ clubmgr/
 │   ├─ cli.py                  # 命令行（含 doctor / backup / report export）
 │   ├─ reports.py              # 公示报表渲染（Markdown / CSV）
 │   ├─ app.py                  # Flask 应用工厂
-│   ├─ views/                  # 9 个蓝图（认证/首页/社员/打印/耗材/额度/经费/账号/维护）
+│   ├─ views/                  # 10 个蓝图（认证/首页/社员/打印/耗材/额度/经费/预约/账号/维护）
 │   └─ templates/              # Jinja 模板
 ├─ tests/                      # pytest 测试（101 个用例）
 ├─ .github/workflows/tests.yml # CI：push / PR 自动跑测试

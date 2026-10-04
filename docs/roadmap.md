@@ -19,7 +19,7 @@
 | `consumption` 单位 | 按**克**处理（字段注释与文档统一写"克"） | `Record.consumption` |
 | 打印失败 / 废件 | 暂不记录（没有对应字段），只记成功件 | — |
 | Web 端如何确定操作人 | **做用户表 + 登录界面**：账号关联社员，权限仍取自社员角色；本地测试账号 `admin / admin123` | `users` 表、`UserService`、`interfaces/views/auth.py` |
-| 预约规则 | 你的原话是"按打印个数状态预约"，含义待确认（见文末第 1 条） | 阶段 2.3 |
+| 预约规则 | **谁都能提交预约；只有社长 / 副社长 / 运维（op1、op2）审核通过后才进排班表**。同一天同一人只能有一条已通过的排班（部分唯一索引兜底），提交本身不受限 | `reservations` 表、`ReservationService`、`permissions.MATRIX["review_reservation"]` |
 
 仍未定的问题见文末。
 
@@ -62,32 +62,30 @@
 **阶段 1 验收**（`tests/cli_test.py::test_phase1_acceptance_via_cli` 自动跑，也可手工执行）：
 建社员 → 学期初发额度 → 记录打印 → 额度 / 库存 / 经费报表。
 
-## 阶段 2 · 接口与运维（🟡 只剩预约）
+## 阶段 2 · 接口与运维（✅ 已完成）
 
 | # | 任务 | 标记 | 提交 |
 | --- | --- | --- | --- |
 | 2.1 | **CLI**：`python main.py ...`，覆盖全部业务动作，`--json` 可脚本化 | ✅ `interfaces/cli.py` | `11523bc` |
 | 2.2a | **登录账号**：`users` 表 + pbkdf2 口令哈希 + `UserService`（结构版本 3） | ✅ `domain/security.py` · ✅ `interfaces/…` | `b5bc63c` |
 | 2.2b | **Web 界面**：应用工厂 + 8 个蓝图 + 11 个模板 + `main.py web` | ✅ `interfaces/app.py` · ✅ `interfaces/views/` | `09b5056` |
+| 2.3a | **预约数据层与服务层**：结构版本 4、`SQLiteReservationRepo`、`ReservationService`、新权限 `review_reservation` | ✅ `infrastructure/schema.sql` · ✅ `domain/services.py` | `967e448` |
+| 2.3b | **预约 CLI 与 Web 页面**：`reservation` 子命令组、`/reservations`（排班表 + 提交 + 我的 + 审核队列） | ✅ `interfaces/cli.py` · ✅ `interfaces/views/reservations.py` | `8ea2297` · `6149ef9` |
 | 2.4 | **体检与热备份**：`doctor`（版本/完整性/外键/可疑数据）、`backup`（在线备份 + 校验 + 保留份数） | ✅ `infrastructure/backup.py` · ✅ CLI | `a4862e1` |
 | 2.5 | **公示报表与维护页**：`report export`（Markdown + CSV）、Web `/admin`（备份 + 下载）、CI | ✅ `interfaces/reports.py` · ✅ `interfaces/views/admin.py` · ✅ `.github/workflows/tests.yml` | `8bba930` |
-| 2.3 | `reservations` 预约排期（仓储 + 服务 + CLI + 页面） | ⏸️ 按你的要求先不做 | — |
 
-**MVP 到此可用**：社员 / 打印 / 额度 / 库存 / 经费 / 贡献 / 公示 / 备份 / 体检 全部打通，
-命令行与 Web 双入口，101 个测试 + CI。剩下的只有预约排期与"上生产"（换 WSGI 服务器）。
+**阶段 2 完成**：社员 / 打印 / 额度 / 库存 / 经费 / 贡献 / 预约 / 公示 / 备份 / 体检 全部打通，
+命令行与 Web 双入口，123 个测试 + CI。剩下的是"上生产"（换 WSGI 服务器）与文末的可选优化。
 
 Web 端要点：账号只是"证明你是哪个社员"，权限仍取自该社员的角色；会话里只放 `user_id`，
 每个请求重新取角色；SQLite 单连接跨线程 + 一把请求锁串行化；会话密钥取
 `CLUBMGR_SECRET_KEY`，否则生成 `data/secret_key` 复用。
 
-## 待决策的业务问题
+## 待决策 / 可选的后续问题
 
-1. **预约规则到底怎么算**？你的回复是"按打印个数状态预约"，需要确认它的准确含义，例如是不是
-   "一次预约 = 一件打印（按**件数**占名额），并且有 `pending → printed / cancelled` 的状态流转"。
-   这决定 `reservations` 的唯一约束（`(week_start, activity_day, order_no)` 还是
-   `(week_start, activity_day, member_id)`，或者要加 `count` 字段）与页面长什么样。
-2. 经费与库存要不要**月度快照表**？目前一律实时 `SUM`，数据量小够用。
-3. 社员自助查额度已经能用 Web 登录实现（`member` 角色只能看自己）；
+1. 经费与库存要不要**月度快照表**？目前一律实时 `SUM`，数据量小够用。
+2. 社员自助查额度已经能用 Web 登录实现（`member` 角色只能看自己）；
    是否还需要"不登录也能查自己额度"的匿名入口？
-4. **耗材停用的边界**：删除还是加 `status` 字段（社员退社已定为只改 `status`）。
-5. 打印**失败 / 废件**要不要记（若要记，需要加字段并定"是否扣额度"）。
+3. **耗材停用的边界**：删除还是加 `status` 字段（社员退社已定为只改 `status`）。
+4. 打印**失败 / 废件**要不要记（若要记，需要加字段并定"是否扣额度"）。
+5. 预约要不要**跨周限制**（例如只能约本周 / 下周）与**取消时限**？现在是随时可约、随时可撤。
