@@ -13,6 +13,9 @@
 
 阶段 2.2 变更：新增 ``User``（登录账号），一个账号关联一个社员，
 权限仍然取自该社员的 ``role``，所以权限判断逻辑不用改。结构版本升到 3。
+
+阶段 2.3 变更：``Reservation`` 增加 ``reviewer_id`` / ``reviewed_at``；
+规则是"谁都能提交，社长 / 副社长 / 运维审核通过后才进排班表"。结构版本升到 4。
 """
 
 import datetime
@@ -106,13 +109,17 @@ class FundTransaction:
 
 @dataclass
 class Reservation:
+    """预约（阶段 2.3）。谁都能提交（pending），审核通过后才进排班表（approved）。"""
+
     id: Optional[int] = None
     member_id: int = 0
-    week_start: date = field(default_factory=date.today)
-    activity_day: str = ""            # mon/wed/fri
-    order_no: int = 0
-    status: str = "pending"
-    operator_id: int = 0
+    week_start: date = field(default_factory=date.today)   # 所在周的周一
+    activity_day: str = ""            # mon / wed / fri
+    order_no: int = 0                 # 0 = 未排班；通过时分配 1..n
+    status: str = "pending"           # pending / approved / rejected / cancelled
+    operator_id: int = 0              # 提交人
+    reviewer_id: Optional[int] = None # 审核（或撤销）的人
+    reviewed_at: Optional[datetime.datetime] = None
     note: Optional[str] = None
 
 @dataclass

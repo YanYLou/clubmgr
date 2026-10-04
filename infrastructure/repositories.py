@@ -31,6 +31,7 @@ from domain.models import (
     Member,
     QuotaTransaction,
     Record,
+    Reservation,
     Role,
     User,
 )
@@ -43,6 +44,7 @@ from domain.repositories import (
     QuotaTransactionRepository,
     RecordRepository,
     Repository,
+    ReservationRepository,
     UserRepository,
 )
 from infrastructure.db import Database
@@ -247,6 +249,18 @@ class SQLiteMemberRepo(SQLite3Repository[Member], MemberRepository):
         """在社社员（阶段 1 新增，学期初发额度时用）。"""
         return self._list(status="active")
 
+    def names_for(self, member_ids: list[int]) -> dict[int, str]:
+        """按 id 批量取姓名（阶段 2.3 新增，排班表等渲染用）。"""
+        ids = sorted({int(member_id) for member_id in member_ids})
+        if not ids:
+            return {}
+        placeholders = ", ".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"SELECT id, name FROM members WHERE id IN ({placeholders})",
+            tuple(ids),
+        ).fetchall()
+        return {row["id"]: row["name"] for row in rows}
+
 
 class SQLiteRecordRepo(SQLite3Repository[Record], RecordRepository):
     table = "records"
@@ -368,4 +382,70 @@ class SQLiteUserRepo(SQLite3Repository[User], UserRepository):
         return self._query(
             f"SELECT {self._columns} FROM users WHERE member_id = ? ORDER BY id",
             (member_id,),
+        )
+
+
+class SQLiteReservationRepo(SQLite3Repository[Reservation], ReservationRepository):
+    """预约仓储（阶段 2.3 新增）。
+
+    提交不设限；"同一天同一人只能有一条已通过"由 schema.sql 里的部分唯一索引兜底，
+    这里提供查重与排班序号分配所需的查询。
+    """
+
+    table = "reservations"
+    entity_cls = Reservation
+
+    def list_by_week(self, week_start: date) -> list[Reservation]:
+        return self._query(
+            f"SELECT {self._columns} FROM reservations WHERE week_start = ? "
+            "ORDER BY activity_day, order_no, id",
+            (week_start.isoformat(),),
+        )
+
+    def list_by_member(self, member_id: int) -> list[Reservation]:
+        return self._query(
+            f"SELECT {self._columns} FROM reservations WHERE member_id = ? "
+            "ORDER BY week_start DESC, activity_day, id",
+            (member_id,),
+        )
+
+    def list_by_status(self, status: str, *,
+                       week_start: date | None = None) -> list[Reservation]:
+        if week_start is None:
+            return self._query(
+                f"SELECT {self._columns} FROM reservations WHERE status = ? "
+                "ORDER BY week_start, activity_day, order_no, id",
+                (status,),
+            )
+        return self._query(
+            f"SELECT {self._columns} FROM reservations "
+            "WHERE status = ? AND week_start = ? ORDER BY activity_day, order_no, id",
+            (status, week_start.isoformat()),
+        )
+
+    def next_order_no(self, week_start: date, activity_day: str) -> int:
+        """该活动日下一个排班序号（只数已通过的）。"""
+        row = self.conn.execute(
+            "SELECT COALESCE(MAX(order_no), 0) FROM reservations "
+            "WHERE week_start = ? AND activity_day = ? AND status = 'approved'",
+            (week_start.isoformat(), activity_day),
+        ).fetchone()
+        return int(row[0]) + 1
+
+    def find_approved(self, week_start: date, activity_day: str,
+                      member_id: int) -> Reservation | None:
+        return self._query_one(
+            f"SELECT {self._columns} FROM reservations "
+            "WHERE week_start = ? AND activity_day = ? AND member_id = ? "
+            "AND status = 'approved' LIMIT 1",
+            (week_start.isoformat(), activity_day, member_id),
+        )
+
+    def find_pending(self, week_start: date, activity_day: str,
+                     member_id: int) -> Reservation | None:
+        return self._query_one(
+            f"SELECT {self._columns} FROM reservations "
+            "WHERE week_start = ? AND activity_day = ? AND member_id = ? "
+            "AND status = 'pending' LIMIT 1",
+            (week_start.isoformat(), activity_day, member_id),
         )

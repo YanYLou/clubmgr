@@ -33,7 +33,8 @@ EVERYONE = frozenset(Role)
 MATRIX: dict[str, frozenset[Role]] = {
     "view_all":        FULL,                      # 查看全社数据与报表
     "edit_members":    FULL | {Role.HR},          # 成员增改 / 退社
-    "schedule":        FULL | {Role.OP1},         # 预约安排（阶段 2 使用）
+    "schedule":        FULL | {Role.OP1},         # 预约安排（替别人提交 / 修改）
+    "review_reservation": FULL | {Role.OP1, Role.OP2},   # 审核预约（阶段 2.3 新增）
     "write_record":    FULL | {Role.OP2},         # 记录打印（含耗材出库）
     "allow_overdraft": FULL,                      # 额度不足时仍然记账
     "adjust_quota":    FULL,                      # 手工调整额度

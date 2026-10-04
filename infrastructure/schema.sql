@@ -1,6 +1,6 @@
 
 -- 建表脚本，只在空库上执行（见 infrastructure/db.py 的 _init_schema）。
--- 结构版本：3 —— 与 db.py 的 SCHEMA_VERSION 保持一致；改动本文件必须同步 +1。
+-- 结构版本：4 —— 与 db.py 的 SCHEMA_VERSION 保持一致；改动本文件必须同步 +1。
 
 CREATE TABLE members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,13 +78,16 @@ CREATE TABLE reservations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     member_id INTEGER NOT NULL,
     week_start TEXT NOT NULL,
-    activity_day TEXT NOT NULL,  
-    order_no INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    operator_id INTEGER NOT NULL,
+    activity_day TEXT NOT NULL,
+    order_no INTEGER NOT NULL DEFAULT 0,          -- 0 = 未排班；审核通过时分配 1..n
+    status TEXT NOT NULL DEFAULT 'pending',       -- pending / approved / rejected / cancelled
+    operator_id INTEGER NOT NULL,                 -- 提交人
+    reviewer_id INTEGER,                          -- 审核（或撤销）的人
+    reviewed_at TEXT,                             -- 审核时间
     note TEXT,
     FOREIGN KEY (member_id) REFERENCES members(id),
-    FOREIGN KEY (operator_id) REFERENCES members(id)
+    FOREIGN KEY (operator_id) REFERENCES members(id),
+    FOREIGN KEY (reviewer_id) REFERENCES members(id)
 );
 
 CREATE TABLE contributions (
@@ -120,4 +123,10 @@ CREATE INDEX ix_quota_member         ON quota_transactions(member_id);
 CREATE INDEX ix_inventory_filament   ON inventory_transactions(filament_id);
 CREATE INDEX ix_fund_date            ON fund_transactions(date);
 CREATE INDEX ix_contributions_member ON contributions(member_id);
-CREATE INDEX ix_reservations_week    ON reservations(week_start, activity_day);
+
+-- 预约（阶段 2.3 新增）：提交不设限，只有「已通过」才进排班表；
+-- 部分唯一索引保证同一天同一人最多一条已通过的排班（待审核 / 被驳回的不受限制）
+CREATE UNIQUE INDEX ux_reservations_approved
+    ON reservations(week_start, activity_day, member_id) WHERE status = 'approved';
+CREATE INDEX ix_reservations_schedule
+    ON reservations(week_start, activity_day, status, order_no);

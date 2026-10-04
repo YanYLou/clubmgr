@@ -24,6 +24,7 @@ from domain.services import (
     QuotaService,
     RecordService,
     ReportService,
+    ReservationService,
     Services,
     UserService,
 )
@@ -36,6 +37,7 @@ from infrastructure.repositories import (
     SQLiteMemberRepo,
     SQLiteQuotaRepo,
     SQLiteRecordRepo,
+    SQLiteReservationRepo,
     SQLiteUserRepo,
 )
 
@@ -54,7 +56,7 @@ def ensure_data_dir() -> Path:
 
 
 def build_repositories(db: Database) -> SimpleNamespace:
-    """构造具体仓储（阶段 1.4 新增，阶段 2.2 加入 users）。"""
+    """构造具体仓储（阶段 1.4 新增，阶段 2.2 加入 users，阶段 2.3 加入 reservations）。"""
     return SimpleNamespace(
         member=SQLiteMemberRepo(db),
         record=SQLiteRecordRepo(db),
@@ -64,6 +66,7 @@ def build_repositories(db: Database) -> SimpleNamespace:
         fund=SQLiteFundRepo(db),
         contribution=SQLiteContributionRepo(db),
         user=SQLiteUserRepo(db),
+        reservation=SQLiteReservationRepo(db),
     )
 
 
@@ -84,6 +87,7 @@ def build_services(db: Database) -> Services:
                              repos.filament, repos.inventory, repos.fund,
                              repos.contribution),
         user=UserService(db, repos.member, repos.user),
+        reservation=ReservationService(db, repos.member, repos.reservation),
     )
 
 

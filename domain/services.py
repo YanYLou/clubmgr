@@ -19,7 +19,7 @@
 """
 
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Sequence
 
 from domain.models import (
@@ -30,6 +30,7 @@ from domain.models import (
     Member,
     QuotaTransaction,
     Record,
+    Reservation,
     Role,
     User,
 )
@@ -42,6 +43,7 @@ from domain.repositories import (
     MemberRepository,
     QuotaTransactionRepository,
     RecordRepository,
+    ReservationRepository,
     TransactionManager,
     UserRepository,
 )
@@ -49,6 +51,9 @@ from domain.security import MIN_PASSWORD_LENGTH, hash_password, verify_password
 
 MEMBER_STATUSES = ("active", "left")
 CONTRIBUTION_TYPES = ("money", "material")
+ACTIVITY_DAYS = ("mon", "wed", "fri")
+DAY_LABELS = {"mon": "周一", "wed": "周三", "fri": "周五"}
+RESERVATION_STATUSES = ("pending", "approved", "rejected", "cancelled")
 _EDITABLE_MEMBER_FIELDS = frozenset(
     {"name", "qq", "student_id", "role", "status", "join_date", "note"}
 )
@@ -61,6 +66,12 @@ _EDITABLE_MEMBER_FIELDS = frozenset(
 def _today() -> date:
     """取今天。单独包一层，避免函数参数名 ``date`` 遮蔽 ``date`` 类型。"""
     return date.today()
+
+
+def _week_start(value: date | None) -> date:
+    """把任意日期归一到它所在周的周一；不传就用本周。"""
+    day = value or date.today()
+    return day - timedelta(days=day.weekday())
 
 
 def _positive(value, label: str) -> float:
@@ -638,6 +649,145 @@ class UserService(_Service):
         return self.user_repo._list()
 
 
+# ---------------------------------------------------------------------------
+# 预约（阶段 2.3）
+# ---------------------------------------------------------------------------
+
+class ReservationService(_Service):
+    """预约：谁都能提交（``pending``），审核通过后才进排班表（``approved``）。
+
+    与用户确认过的规则：
+
+    - **提交不设限**：任何社员都能为自己提交任意多条预约（同一天重复提交只拦"已有一条
+      待审核"的情况，避免误点两次）；
+    - **只有社长 / 副社长 / 运维（op1、op2）能审核**（权限 ``review_reservation``）；
+      通过时分配排班序号，同日同人只能有一条已通过（数据库部分唯一索引兜底）；
+    - 提交人可以撤销自己的待审核 / 已通过预约，撤销后名额释放；
+    - 排班表（已通过的预约）所有登录用户都能看。
+    """
+
+    def __init__(self, db: TransactionManager, member_repo: MemberRepository,
+                 reservation_repo: ReservationRepository) -> None:
+        super().__init__(db, member_repo)
+        self.reservation_repo = reservation_repo
+
+    # -- 提交 ---------------------------------------------------------------
+
+    def create(self, operator_id: int, *, activity_day: str,
+               week_start: date | None = None, member_id: int | None = None,
+               note: str | None = None) -> Reservation:
+        """提交一条预约（默认给自己；替别人提交需要 ``schedule`` 权限）。"""
+        operator = self._operator_only(operator_id)
+        target = self._member(member_id) if member_id is not None else operator
+        if target.id != operator.id:
+            require(operator.role, "schedule")
+
+        day = (activity_day or "").strip().lower()
+        if day not in ACTIVITY_DAYS:
+            raise ValueError(f"活动日只能是 {ACTIVITY_DAYS}，收到 {activity_day!r}")
+        week = _week_start(week_start)
+
+        if self.reservation_repo.find_pending(week, day, target.id) is not None:
+            raise ValueError(
+                f"{target.name} 对 {week}（{DAY_LABELS[day]}）已有一条待审核的预约，"
+                f"等审核结果或先撤销它")
+
+        with self.db.transaction():
+            return self.reservation_repo._create(Reservation(
+                member_id=target.id, week_start=week, activity_day=day,
+                order_no=0, status="pending", operator_id=operator.id, note=note))
+
+    # -- 审核 ---------------------------------------------------------------
+
+    def review(self, operator_id: int, reservation_id: int, *, approve: bool = True,
+               note: str | None = None, order_no: int | None = None) -> Reservation:
+        """审核：通过与驳回。通过会分配排班序号并进入排班表。"""
+        operator = self._operator(operator_id, "review_reservation")
+        reservation = self._reservation(reservation_id)
+        if reservation.status != "pending":
+            raise ValueError(f"只有待审核的预约能审核，这条当前是 {reservation.status}")
+
+        if approve:
+            existing = self.reservation_repo.find_approved(
+                reservation.week_start, reservation.activity_day, reservation.member_id)
+            if existing is not None:
+                raise ValueError(
+                    f"该社员在这一天已经有排班（预约 #{existing.id}，序号 "
+                    f"{existing.order_no}），不能重复通过")
+            sequence = order_no or self.reservation_repo.next_order_no(
+                reservation.week_start, reservation.activity_day)
+            if sequence <= 0:
+                raise ValueError("排班序号必须大于 0")
+            updated = replace(reservation, status="approved", order_no=sequence,
+                              reviewer_id=operator.id, reviewed_at=datetime.now(),
+                              note=note or reservation.note)
+        else:
+            updated = replace(reservation, status="rejected", order_no=0,
+                              reviewer_id=operator.id, reviewed_at=datetime.now(),
+                              note=note or reservation.note)
+
+        with self.db.transaction():
+            self.reservation_repo._update(updated)
+        return updated
+
+    def reject(self, operator_id: int, reservation_id: int, *,
+               note: str | None = None) -> Reservation:
+        """驳回（``review(approve=False)`` 的语义化写法）。"""
+        return self.review(operator_id, reservation_id, approve=False, note=note)
+
+    # -- 撤销 ---------------------------------------------------------------
+
+    def cancel(self, operator_id: int, reservation_id: int, *,
+               note: str | None = None) -> Reservation:
+        """撤销预约：本人随时可以撤；撤别人的需要审核权限。"""
+        operator = self._operator_only(operator_id)
+        reservation = self._reservation(reservation_id)
+        if reservation.status not in ("pending", "approved"):
+            raise ValueError(f"只有待审核 / 已通过的预约能撤销，这条是 {reservation.status}")
+        if reservation.member_id != operator.id:
+            require(operator.role, "review_reservation")
+
+        updated = replace(reservation, status="cancelled", order_no=0,
+                          reviewer_id=operator.id, reviewed_at=datetime.now(),
+                          note=note or reservation.note)
+        with self.db.transaction():
+            self.reservation_repo._update(updated)
+        return updated
+
+    # -- 查询 ---------------------------------------------------------------
+
+    def schedule(self, operator_id: int, *, week_start: date | None = None) -> dict:
+        """排班表：只含已通过的预约，按活动日分组、按序号排列。所有登录用户可看。"""
+        self._operator_only(operator_id)
+        week = _week_start(week_start)
+        approved = self.reservation_repo.list_by_status("approved", week_start=week)
+        return {
+            "week_start": week,
+            "days": [(day, [r for r in approved if r.activity_day == day])
+                     for day in ACTIVITY_DAYS],
+            "names": self.member_repo.names_for([r.member_id for r in approved]),
+        }
+
+    def pending(self, operator_id: int) -> list[Reservation]:
+        """待审核队列（需要审核权限）。"""
+        self._operator(operator_id, "review_reservation")
+        return self.reservation_repo.list_by_status("pending")
+
+    def mine(self, operator_id: int, *, member_id: int | None = None) -> list[Reservation]:
+        """我的预约（看别人的需要审核权限）。"""
+        operator = self._operator_only(operator_id)
+        target = self._member(member_id) if member_id is not None else operator
+        if target.id != operator.id:
+            require(operator.role, "review_reservation")
+        return self.reservation_repo.list_by_member(target.id)
+
+    def _reservation(self, reservation_id: int) -> Reservation:
+        reservation = self.reservation_repo._get(reservation_id)
+        if reservation is None:
+            raise ValueError(f"预约不存在: {reservation_id}")
+        return reservation
+
+
 @dataclass(frozen=True)
 class Services:
     """装配好的服务集合（由 ``main.build_services`` 构造）。"""
@@ -650,3 +800,4 @@ class Services:
     contribution: ContributionService
     report: ReportService
     user: UserService
+    reservation: ReservationService

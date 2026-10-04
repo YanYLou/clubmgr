@@ -45,6 +45,8 @@ class MemberRepository(Repository[Member]):
     def find_by_student_name(self, student_name: str) -> Member | None: ...
     @abstractmethod
     def list_active(self) -> list[Member]: ...               # 阶段 1 新增：在社社员
+    @abstractmethod
+    def names_for(self, member_ids: list[int]) -> dict[int, str]: ...   # 阶段 2.3 新增
 
 class UserRepository(Repository[User]):                      # 阶段 2.2 新增
     @abstractmethod
@@ -85,6 +87,18 @@ class FundTransactionRepository(Repository[FundTransaction]):
 class ReservationRepository(Repository[Reservation]):
     @abstractmethod
     def list_by_week(self, week_start: date) -> list[Reservation]: ...
+    @abstractmethod
+    def list_by_member(self, member_id: int) -> list[Reservation]: ...
+    @abstractmethod
+    def list_by_status(self, status: str, *, week_start: date | None = None) -> list[Reservation]: ...
+    @abstractmethod
+    def next_order_no(self, week_start: date, activity_day: str) -> int: ...
+    @abstractmethod
+    def find_approved(self, week_start: date, activity_day: str,
+                      member_id: int) -> Reservation | None: ...
+    @abstractmethod
+    def find_pending(self, week_start: date, activity_day: str,
+                     member_id: int) -> Reservation | None: ...
 
 class ContributionRepository(Repository[Contribution]):
     @abstractmethod
