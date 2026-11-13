@@ -1,6 +1,8 @@
 from domain.repositories import Repository
+from domain.models import *
 from infrastructure.db import Database
 from typing import Protocol, TypeVar, Any, ClassVar
+from datetime import date, timedelta
 from dataclasses import dataclass, fields, replace
 
 import sqlite3
@@ -94,3 +96,57 @@ class SQLite3Repository(Repository[T]):
         sql = f"SELECT {cols} FROM {self.table}{where_clause}"
         rows = self.conn.execute(sql, params).fetchall()
         return [self.entity_cls(*row) for row in rows]
+
+
+    # HELPERS FOR CONCRETE REPOSITORIES
+    def _select_cols(self) -> str:
+        return ", ".join(f.name for f in fields(self.entity_cls))
+
+    def _from_rows(self, rows) -> list[T]:
+        return [self.entity_cls(*row) for row in rows]
+
+    def _find_by_date_range(self, start: date, end: date) -> list[T]:
+        sql = f"SELECT {self._select_cols()} FROM {self.table} WHERE date BETWEEN ? AND ?"
+        rows = self.conn.execute(sql, (start.isoformat(), end.isoformat())).fetchall()
+        return self._from_rows(rows)
+
+
+# Concrete SQLite repositories
+
+class MemberRepository(SQLite3Repository[Member]):
+    table = "members"
+    entity_cls = Member
+
+    def find_by_student_id(self, student_id: str) -> Member | None:
+        rows = self._list(student_id=student_id)
+        return rows[0] if rows else None
+
+    def list_by_role(self, role: Role) -> list[Member]:
+        return self._list(role=role.value)
+
+    def find_by_student_name(self, student_name: str) -> Member | None:
+        rows = self._list(name=student_name)
+        return rows[0] if rows else None
+
+    def register_student(self, student: Member) -> Member:
+        return self._create(student)
+
+
+class RecordRepository(SQLite3Repository[Record]):
+    table = "records"
+    entity_cls = Record
+
+    def list_by_member(self, member_id: int) -> list[Record]:
+        return self._list(member_id=member_id)
+
+    def list_by_date_range(self, start: date, end: date) -> list[Record]:
+        return self._find_by_date_range(start, end)
+
+
+class ReservationRepository(SQLite3Repository[Reservation]):
+    table = "reservations"
+    entity_cls = Reservation
+
+    def list_by_week(self, week_start: date) -> list[Reservation]:
+        end = week_start + timedelta(days=6)
+        return self._find_by_date_range(week_start, end)

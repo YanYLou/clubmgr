@@ -1,5 +1,5 @@
 
-CREATE TABLE members (
+CREATE TABLE IF NOT EXISTS members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     qq TEXT,
@@ -10,20 +10,7 @@ CREATE TABLE members (
     note TEXT
 );
 
-CREATE TABLE quota_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    member_id INTEGER NOT NULL,
-    amount REAL NOT NULL,         
-    type TEXT NOT NULL,        
-    related_record_id INTEGER,
-    operator_id INTEGER NOT NULL,
-    date TEXT NOT NULL,
-    note TEXT,
-    FOREIGN KEY (member_id) REFERENCES members(id),
-    FOREIGN KEY (operator_id) REFERENCES members(id)
-);
-
-CREATE TABLE records (
+CREATE TABLE IF NOT EXISTS records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     member_id INTEGER NOT NULL,
     printer_name TEXT NOT NULL,
@@ -31,67 +18,17 @@ CREATE TABLE records (
     consumption REAL NOT NULL,
     date TEXT NOT NULL,
     operator_id INTEGER NOT NULL,
-    is_charged INTEGER NOT NULL DEFAULT 0,
-    fee REAL NOT NULL DEFAULT 0,
     reservation_id INTEGER,
     comments TEXT,
     FOREIGN KEY (member_id) REFERENCES members(id),
     FOREIGN KEY (operator_id) REFERENCES members(id)
 );
 
-CREATE TABLE filaments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    material TEXT,
-    color TEXT,
-    unit_price REAL,
-    note TEXT
-);
-
-CREATE TABLE inventory_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    filament_id INTEGER NOT NULL,
-    amount REAL NOT NULL,        
-    type TEXT NOT NULL,         
-    related_record_id INTEGER,
-    operator_id INTEGER NOT NULL,
-    date TEXT NOT NULL,
-    note TEXT,
-    FOREIGN KEY (filament_id) REFERENCES filaments(id),
-    FOREIGN KEY (operator_id) REFERENCES members(id)
-);
-
-CREATE TABLE fund_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    amount REAL NOT NULL,      
-    type TEXT NOT NULL,        
-    date TEXT NOT NULL,
-    operator_id INTEGER NOT NULL,
-    note TEXT,
-    FOREIGN KEY (operator_id) REFERENCES members(id)
-);
-
-CREATE TABLE reservations (
+CREATE TABLE IF NOT EXISTS reservations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     member_id INTEGER NOT NULL,
-    week_start TEXT NOT NULL,
-    activity_day TEXT NOT NULL,  
-    order_no INTEGER NOT NULL,
+    date TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
-    operator_id INTEGER NOT NULL,
-    note TEXT,
-    FOREIGN KEY (member_id) REFERENCES members(id),
-    FOREIGN KEY (operator_id) REFERENCES members(id)
-);
-
-CREATE TABLE contributions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    member_id INTEGER NOT NULL,
-    amount REAL NOT NULL,
-    type TEXT NOT NULL,           
-    material_desc TEXT,
-    reward_quota REAL NOT NULL DEFAULT 0,
-    date TEXT NOT NULL,
     operator_id INTEGER NOT NULL,
     note TEXT,
     FOREIGN KEY (member_id) REFERENCES members(id),
