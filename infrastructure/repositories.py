@@ -1,16 +1,28 @@
-from domain.repositories import Repository
+from domain.repositories import (
+    Repository,
+    MemberRepository as MemberRepositoryABC,
+    RecordRepository as RecordRepositoryABC,
+    ReservationRepository as ReservationRepositoryABC,
+)
 from domain.models import *
 from infrastructure.db import Database
-from typing import Protocol, TypeVar, Any, ClassVar
+from typing import Any, TypeVar, cast
 from datetime import date, timedelta
-from dataclasses import dataclass, fields, replace
+from dataclasses import fields, replace
 
 import sqlite3
 
-class DataclassInstance(Protocol):
-    __dataclass_fields__: ClassVar[dict[str, Any]]
+T = TypeVar("T")
 
-T = TypeVar("T", bound=DataclassInstance)
+
+def _dc_fields(obj: Any) -> tuple[Any, ...]:
+    """dataclasses.fields 的宽松类型包装，规避 dataclass 协议的严格检查。"""
+    return fields(obj)
+
+
+def _dc_replace(obj: Any, **changes: Any) -> Any:
+    """dataclasses.replace 的宽松类型包装。"""
+    return replace(obj, **changes)
 
 PRIMARY_KEY = "id"
 
@@ -26,7 +38,7 @@ class SQLite3Repository(Repository[T]):
     # CREATE METHOD
     def _create(self, entity: T) -> T:
 
-        all_cols = [f.name for f in fields(entity)]
+        all_cols = [f.name for f in _dc_fields(entity)]
         insert_cols = [c for c in all_cols if c != PRIMARY_KEY]
         cols_clause = ", ".join(col for col in insert_cols)
         placeholders = ", ".join("?" for _ in insert_cols)
@@ -37,13 +49,13 @@ class SQLite3Repository(Repository[T]):
         cur = self.conn.execute(sql, params)
 
         newid = cur.lastrowid
-        return replace(entity, **{PRIMARY_KEY: newid})
+        return cast(T, _dc_replace(entity, **{PRIMARY_KEY: newid}))
 
 
     # GET METHOD
     def _get(self, entity_id: int) -> T | None:
 
-        cols = ", ".join(f.name for f in fields(self.entity_cls))
+        cols = ", ".join(f.name for f in _dc_fields(self.entity_cls))
         sql = f"SELECT {cols} FROM {self.table} WHERE {PRIMARY_KEY} = ?"
         row = self.conn.execute(sql, (entity_id,)).fetchone()
         return self.entity_cls(*row) if row else None
@@ -55,7 +67,7 @@ class SQLite3Repository(Repository[T]):
         if getattr(entity, PRIMARY_KEY) is None:
             raise ValueError(f"UPDATE method needs '{PRIMARY_KEY}'!")
 
-        all_cols = [f.name for f in fields(entity)]
+        all_cols = [f.name for f in _dc_fields(entity)]
         set_cols = [c for c in all_cols if c != PRIMARY_KEY]
         if not set_cols:
             return
@@ -79,13 +91,13 @@ class SQLite3Repository(Repository[T]):
 
     # LIST METHOD
     def _list(self, **filters) -> list[T]:
-        cols = ", ".join(f.name for f in fields(self.entity_cls))
+        cols = ", ".join(f.name for f in _dc_fields(self.entity_cls))
 
         where_clause = ""
         params: tuple = ()
 
         if filters:
-            valid_cols = {f.name for f in fields(self.entity_cls)}
+            valid_cols = {f.name for f in _dc_fields(self.entity_cls)}
             bad = set(filters) - valid_cols
             if bad:
                 raise ValueError(f"Illegal filter(s): {bad}")
@@ -100,7 +112,7 @@ class SQLite3Repository(Repository[T]):
 
     # HELPERS FOR CONCRETE REPOSITORIES
     def _select_cols(self) -> str:
-        return ", ".join(f.name for f in fields(self.entity_cls))
+        return ", ".join(f.name for f in _dc_fields(self.entity_cls))
 
     def _from_rows(self, rows) -> list[T]:
         return [self.entity_cls(*row) for row in rows]
@@ -113,7 +125,7 @@ class SQLite3Repository(Repository[T]):
 
 # Concrete SQLite repositories
 
-class MemberRepository(SQLite3Repository[Member]):
+class MemberRepository(SQLite3Repository[Member], MemberRepositoryABC):
     table = "members"
     entity_cls = Member
 
@@ -132,7 +144,7 @@ class MemberRepository(SQLite3Repository[Member]):
         return self._create(student)
 
 
-class RecordRepository(SQLite3Repository[Record]):
+class RecordRepository(SQLite3Repository[Record], RecordRepositoryABC):
     table = "records"
     entity_cls = Record
 
@@ -143,7 +155,7 @@ class RecordRepository(SQLite3Repository[Record]):
         return self._find_by_date_range(start, end)
 
 
-class ReservationRepository(SQLite3Repository[Reservation]):
+class ReservationRepository(SQLite3Repository[Reservation], ReservationRepositoryABC):
     table = "reservations"
     entity_cls = Reservation
 
